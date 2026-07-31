@@ -1,5 +1,5 @@
 // Local SQLite (full cache) for the Electron front-desk device.
-// On first launch: copy the shipped empty template DB (with schema) into userData, then seed config.
+// On first launch: create empty DB file and apply schema.sql, then seed config.
 import { app } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
@@ -15,23 +15,38 @@ export function getPrisma(): PrismaClient {
   return prisma;
 }
 
+// Apply schema.sql (CREATE TABLE IF NOT EXISTS style is safer; here we create-if-missing).
+async function applySchema() {
+  if (!prisma) throw new Error('prisma not initialized');
+  const schemaPath = app.isPackaged
+    ? path.join(process.resourcesPath, 'schema.sql')
+    : path.join(__dirname, '../electron/schema.sql');
+  const sql = fs.readFileSync(schemaPath, 'utf-8');
+  // Split on semicolons at end of statements, execute each non-empty.
+  // SQLite via Prisma: use $executeRawUnsafe for DDL (no params here).
+  const stmts = sql.split(/;\s*\n/).map((s) => s.trim()).filter(Boolean);
+  for (const stmt of stmts) {
+    try { await prisma!.$executeRawUnsafe(stmt); } catch (e) { /* already exists */ }
+  }
+}
+
 export async function initLocalDb(): Promise<PrismaClient> {
   const userData = app.getPath('userData');
   const dbPath = path.join(userData, 'client.db');
-  // First launch: copy template (with schema) if no db yet.
-  if (!fs.existsSync(dbPath)) {
-    const templatePath = app.isPackaged
-      ? path.join(process.resourcesPath, 'client.template.db')
-      : path.join(__dirname, '../electron/resources/client.template.db');
-    if (fs.existsSync(templatePath)) {
-      fs.copyFileSync(templatePath, dbPath);
-    }
-  }
+  const isNew = !fs.existsSync(dbPath);
   process.env.DATABASE_URL = `file:${dbPath}`;
   prisma = new PrismaClient({ log: ['error'] });
 
+  if (isNew) {
+    await applySchema();
+  }
+
   // Seed config if empty (so the device has stores/staff/tiers/templates/brands offline).
-  const storeCount = await prisma.store.count();
+  const storeCount = await prisma.store.count().catch(async (e) => {
+    // Table might still be missing if schema apply failed; retry once.
+    await applySchema();
+    return prisma!.store.count();
+  });
   if (storeCount === 0) {
     await runSeed(prisma);
   }

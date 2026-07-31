@@ -13,7 +13,7 @@ export default defineConfig({
     port: 5174,
     strictPort: true,
     proxy: {
-      '/api': { target: 'http://localhost:4000', changeOrigin: true },
+      '/api': { target: process.env.CLINIC_SERVER_URL || 'http://localhost:4000', changeOrigin: true },
     },
   },
   build: {
