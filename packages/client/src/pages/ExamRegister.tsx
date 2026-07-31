@@ -9,8 +9,9 @@ import { useNavigate } from 'react-router-dom';
 import { api } from '../api';
 import { Button, Card, Field, Input, Select, TextArea, fmtCents } from '../components/ui';
 import { PhoneInput, isPhoneValid } from '../components/PhoneInput';
-import { DEFAULT_REVIEW_DAYS } from '@clinic/shared';
-
+// DEFAULT_REVIEW_DAYS = 90 (defined inline to avoid importing @clinic/shared,
+// whose barrel re-exports the Prisma client — pulling Prisma into the renderer
+// bundle breaks the browser environment with "process is not defined").
 const todayStr = () => new Date().toISOString().slice(0, 10);
 const addDaysStr = (days: number) => {
   const d = new Date();
@@ -39,7 +40,7 @@ export default function ExamRegister() {
   const [optical, setOptical] = useState({ lensBrand: '', lensPrice: '', frameBrand: '', framePrice: '' });
   const [eyeTotal, setEyeTotal] = useState('');
   // C.6: review is "N days from now" (default 90), the date is computed & shown read-only.
-  const [reviewDays, setReviewDays] = useState<string>(String(DEFAULT_REVIEW_DAYS));
+  const [reviewDays, setReviewDays] = useState<string>('90');
   const [reviewNote, setReviewNote] = useState('');
   const [registeredById, setRegisteredById] = useState('');
   const [err, setErr] = useState('');
