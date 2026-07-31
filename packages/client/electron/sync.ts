@@ -128,6 +128,16 @@ export async function syncOnce(): Promise<{ pushed: number; pulled: number; onli
   const online = await pingServer();
   state.online = online;
   if (!online) { state.pending = await countPending(); emit(); saveState(state); return { pushed: 0, pulled: 0, online: false }; }
+  // Device not bound yet: still mark online + update lastSyncAt so the UI shows
+  // "在线" instead of a stale "离线 · 数据更新于N小时前". Push/pull are no-ops
+  // until device.json exists (handled inside pushOnce/pullOnce).
+  const device = getDeviceIdentity();
+  if (!device) {
+    state.lastSyncAt = new Date().toISOString();
+    state.pending = 0;
+    emit(); saveState(state);
+    return { pushed: 0, pulled: 0, online: true };
+  }
   try {
     const pushed = await pushOnce();
     const pulled = await pullOnce();

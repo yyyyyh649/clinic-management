@@ -224,7 +224,28 @@ Electron 客户端默认连 `http://localhost:4000`。三种方式覆盖：
 - 之后改密码走**后台「修改密码」页面**（无需碰 `.env`、无需重启服务）：先输入当前密码验证通过，再输入新密码。两类密码分开改。
 - 改了后台登录密码后，**当前所有登录状态立即失效**，需用新密码重新登录；新设备绑定也跟着新密码走。
 - 如果 `.env` 两个初始密码都没配，且数据库里也没有记录，服务**首次启动直接报错退出**，不允许用写死的默认值悄悄跑起来。
-- 忘记密码的恢复方式：删除数据库 `Password` 表中对应行 → 在 `.env` 配置新的初始密码 → 重启服务（仅此一次，之后改密码走后台界面）。
+- 忘记密码的恢复方式：在服务器上用以下命令直接重置数据库中的密码哈希（无需知道旧密码，无需重启服务）：
+
+  ```bash
+  cd <项目根目录>
+  node --input-type=module -e "
+  import bcrypt from 'bcryptjs';
+  import { PrismaClient } from '@clinic/shared';
+  const prisma = new PrismaClient();
+  const newPassword = '你的新密码';  // ← 改成你要的新密码
+  const hash = await bcrypt.hash(newPassword, 10);
+  // 重置后台密码（BACKEND）。要重置敏感信息密码，把 'BACKEND' 改成 'CHANGE'
+  await prisma.password.upsert({
+    where: { key: 'BACKEND' },
+    update: { hash },
+    create: { key: 'BACKEND', hash }
+  });
+  console.log('密码已重置');
+  await prisma.\$disconnect();
+  "
+  ```
+
+  > 重置 BACKEND 密码后，之前所有后台登录状态会立即失效，需用新密码重新登录。已绑定的前台设备不受影响（设备绑定是一次性的）。
 
 其他安全规则：
 
