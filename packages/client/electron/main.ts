@@ -1,9 +1,12 @@
 // Electron main process: boots window, wires IPC + sync loop.
 import { app, BrowserWindow, ipcMain } from 'electron';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { initLocalDb } from './db.js';
 import { registerHandlers } from './handlers.js';
 import { startSyncLoop, stopSyncLoop, onSyncStatus } from './sync.js';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const DEV_URL = process.env.VITE_DEV_SERVER_URL;
 const isDev = !!DEV_URL;
