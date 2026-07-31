@@ -1,4 +1,6 @@
 // 检查详情 (§5.2): full info + customer_id history (会员可跳会员详情) + 复查状态操作.
+// B.7: payment (if any) is shown in full — discount, balance/beans deduct, cash, edit reason,
+//      awarded beans/points, operator & store. Unpaid exams get a 作废本单 + 继续支付 button (B.6).
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { api } from '../api';
@@ -12,6 +14,7 @@ export default function ExamDetail() {
   const [status, setStatus] = useState('PENDING');
   const [reviewerId, setReviewerId] = useState('');
   const [note, setNote] = useState('');
+  const [voiding, setVoiding] = useState(false);
 
   async function load() {
     if (!id) return;
@@ -30,9 +33,24 @@ export default function ExamDetail() {
     await load();
   }
 
+  async function voidDraft() {
+    if (!id) return;
+    if (!confirm('确认作废这条未支付的草稿？作废后不会出现在任何统计和列表里（不可恢复）。')) return;
+    setVoiding(true);
+    try {
+      await api.voidExam(id);
+      nav('/exam');
+    } catch (e: any) {
+      alert(e.message || '作废失败');
+    } finally {
+      setVoiding(false);
+    }
+  }
+
   if (!data) return <div className="text-sm text-ink-500">加载中…</div>;
   const { exam, customer, history } = data;
   const reviewerCandidates = staff.filter((s) => s.depts?.split(',').includes(exam.dept));
+  const pay = exam.payment;
 
   return (
     <div className="space-y-4">
@@ -62,10 +80,49 @@ export default function ExamDetail() {
             <Row label="登记门店" value={exam.registeredStoreName} />
             <Row label="复查日期" value={fmtDate(exam.reviewDate)} />
             <Row label="状态" value={<Badge tone={exam.reviewStatus === 'REVIEWED' ? 'green' : exam.reviewStatus === 'PENDING' ? 'amber' : 'slate'}>{statusLabel(exam.reviewStatus)}</Badge>} />
-            <Row label="支付" value={exam.payment ? <Badge tone="green">已支付</Badge> : <Badge tone="slate">未支付</Badge>} />
+            <Row label="支付" value={pay ? <Badge tone="green">已支付</Badge> : <Badge tone="slate">未支付</Badge>} />
           </div>
         </div>
       </Card>
+
+      {/* B.7: full payment breakdown (only when paid) */}
+      {pay && (
+        <Card title="支付明细" extra={<Badge tone="green">已支付</Badge>}>
+          <div className="grid grid-cols-3 gap-4">
+            <div className="space-y-1.5 text-sm">
+              <Row label="应付基础" value={`${fmtCents(pay.baseAmount)} 元`} />
+              <Row label="折扣类型" value={pay.discountType === 'PERCENT' ? `折扣 ${pay.discountValue}%` : pay.discountType === 'MINUS' ? `立减 ${fmtCents(pay.discountValue)} 元` : '无'} />
+              <Row label="折后应付" value={<span className="font-semibold">{fmtCents(pay.afterDiscount)} 元</span>} />
+            </div>
+            <div className="space-y-1.5 text-sm">
+              <Row label="余额抵扣" value={`${fmtCents(pay.balanceDeduct)} 元`} />
+              <Row label="豆抵扣" value={`${pay.beansDeduct} 豆（折 ${fmtCents(pay.beansDeductAmount)} 元）`} />
+              <Row label="实付现金" value={<span className="font-semibold">{fmtCents(pay.cashPaid)} 元</span>} />
+              {pay.cashPaidEdited && <Row label="手动修改" value={<Badge tone="amber">是 · {pay.editReason || '无备注'}</Badge>} />}
+            </div>
+            <div className="space-y-1.5 text-sm">
+              <Row label="获得豆" value={`${pay.beansAwarded} 豆`} />
+              <Row label="累计积分" value={`${pay.pointsAwarded} 分`} />
+              {pay.payForMemberId && <Row label="代付会员" value={`${pay.payForMemberName || '—'} · ${pay.payForMemberCardNo || ''}`} />}
+              {pay.awardMemberId && <Row label="豆/积分归属" value={pay.awardMemberName || '—'} />}
+              <Row label="操作人" value={pay.operatorName || exam.registeredByName || '—'} />
+              <Row label="支付门店" value={pay.storeName || exam.registeredStoreName || '—'} />
+              <Row label="支付时间" value={fmtDateTime(pay.createdAt)} />
+            </div>
+          </div>
+        </Card>
+      )}
+
+      {/* B.6: unpaid draft — offer to continue payment or void it */}
+      {!pay && (
+        <Card title="未支付草稿" extra={<Badge tone="slate">未支付</Badge>}>
+          <p className="mb-3 text-sm text-ink-500">这单检查尚未完成支付。可继续支付，或作废本单（作废后不会出现在任何统计和列表里，等同未发生过）。</p>
+          <div className="flex gap-2">
+            <Button onClick={() => nav(`/payment/${exam.id}`)}>继续支付</Button>
+            <Button variant="danger" disabled={voiding} onClick={voidDraft}>{voiding ? '作废中…' : '作废本单'}</Button>
+          </div>
+        </Card>
+      )}
 
       {/* Template content rendering */}
       {exam.content?.template && (

@@ -4,10 +4,10 @@ import { contextBridge, ipcRenderer } from 'electron';
 
 const calls = [
   'pingServer', 'getDevice', 'registerDevice', 'getServerUrl', 'setServerUrl',
-  'getSyncStatus', 'syncNow',
+  'getSyncStatus', 'syncNow', 'adminLogin',
   'dedupCustomer', 'searchMembers',
   'registerMember', 'getMember', 'listMembers', 'adjustLedger', 'updateMember',
-  'createExam', 'getExam', 'listExams', 'updateReview',
+  'createExam', 'getExam', 'listExams', 'updateReview', 'voidExam',
   'createPayment', 'createRecharge',
   'getStaff', 'getTiers', 'getTemplates', 'getBrands', 'getStores', 'getSettings',
 ] as const;

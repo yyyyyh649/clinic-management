@@ -1,15 +1,19 @@
 // 会员登记 (§3.1): customer dedup + member fields + init balance/beans.
+// C.1: phone uses PhoneInput (realtime validation). C.2: birthday defaults to today.
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../api';
 import { Button, Card, Field, Input, Modal, Badge, fmtCents } from '../components/ui';
+import { PhoneInput, isPhoneValid } from '../components/PhoneInput';
+
+const todayStr = () => new Date().toISOString().slice(0, 10);
 
 export default function MemberRegister() {
   const nav = useNavigate();
   const [staff, setStaff] = useState<any[]>([]);
   const [tiers, setTiers] = useState<any[]>([]);
   const [form, setForm] = useState({
-    name: '', phone: '', cardNo: '', birthday: '', address: '',
+    name: '', phone: '', cardNo: '', birthday: todayStr(), address: '',
     registeredById: '', initialBalance: '', initialBeans: '',
   });
   const [err, setErr] = useState('');
@@ -26,11 +30,11 @@ export default function MemberRegister() {
 
   function set<K extends keyof typeof form>(k: K, v: string) { setForm((f) => ({ ...f, [k]: v })); }
 
-  // Phone-based customer dedup on phone blur.
-  async function checkPhone() {
-    if (!form.phone) { setReuseCustomerId(null); setReuseHint(''); return; }
+  // Phone-based customer dedup — re-run whenever the phone becomes a valid 11-digit number.
+  async function checkPhone(phone: string) {
+    if (!phone || !isPhoneValid(phone)) { setReuseCustomerId(null); setReuseHint(''); setConflict(null); return; }
     try {
-      const r = await api.dedupCustomer(form.phone, form.name);
+      const r = await api.dedupCustomer(phone, form.name);
       if (r.found && r.mode === 'reuse') {
         setReuseCustomerId(r.customer.id);
         setReuseHint(`已匹配到客户「${r.customer.name}」(${r.customer.phone})，将复用此客户身份，历史检查记录会自动并入。`);
@@ -63,7 +67,7 @@ export default function MemberRegister() {
     if (!form.name || !form.phone || !form.cardNo || !form.birthday || !form.registeredById) {
       setErr('姓名、手机号、卡号、生日、登记人必填'); return;
     }
-    if (!/^\d{11}$/.test(form.phone)) { setErr('手机号需为11位数字'); return; }
+    if (!isPhoneValid(form.phone)) { setErr('手机号格式错误（需11位、第一位为1）'); return; }
     setBusy(true);
     try {
       const staffObj = staff.find((s) => s.id === form.registeredById);
@@ -99,7 +103,7 @@ export default function MemberRegister() {
           </div>
           <div className="mt-4 flex gap-2">
             <Button onClick={() => nav(`/member/${result.member.id}`)}>查看会员详情</Button>
-            <Button variant="ghost" onClick={() => { setResult(null); setForm({ name: '', phone: '', cardNo: '', birthday: '', address: '', registeredById: '', initialBalance: '', initialBeans: '' }); setReuseCustomerId(null); setReuseHint(''); }}>继续登记下一个</Button>
+            <Button variant="ghost" onClick={() => { setResult(null); setForm({ name: '', phone: '', cardNo: '', birthday: todayStr(), address: '', registeredById: '', initialBalance: '', initialBeans: '' }); setReuseCustomerId(null); setReuseHint(''); }}>继续登记下一个</Button>
           </div>
         </Card>
       </div>
@@ -111,10 +115,14 @@ export default function MemberRegister() {
       <Card title="会员登记" extra={<span className="text-xs text-ink-500">办理日期自动记录到秒，自动带上当前设备门店</span>}>
         <div className="grid grid-cols-2 gap-4">
           <Field label="姓名" required>
-            <Input value={form.name} onChange={(e) => set('name', e.target.value)} onBlur={checkPhone} />
+            <Input value={form.name} onChange={(e) => set('name', e.target.value)} />
           </Field>
           <Field label="手机号" required>
-            <Input value={form.phone} onChange={(e) => set('phone', e.target.value)} onBlur={checkPhone} />
+            <PhoneInput
+              value={form.phone}
+              onChange={(e) => set('phone', e.target.value)}
+              onValidChange={(p) => checkPhone(p)}
+            />
           </Field>
           <Field label="会员卡号" required>
             <Input value={form.cardNo} onChange={(e) => set('cardNo', e.target.value)} />

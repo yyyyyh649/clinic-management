@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { api } from '../api';
 import { Card, Button, Badge, Modal, Field, Input, Select, TextArea, EmptyState, fmtDate, fmtDateTime, fmtCents } from '../components/ui';
+import { PhoneInput, isPhoneValid } from '../components/PhoneInput';
 
 const LEDGER_FIELDS = [
   { value: 'BALANCE', label: '卡内余额（元）' },
@@ -45,8 +46,12 @@ export default function MemberDetail() {
 
   async function submitEdit() {
     setErr('');
-    if (edit.phone !== data.customer?.phone && edit.changePassword !== 'change123') {
-      setErr('修改手机号需要 change123 密码'); return;
+    // B.8: no hardcoded password check on the client — the server verifies the
+    // change-password against the DB hash. We only enforce that the phone format
+    // is valid (C.1) and that the change-password is filled when the phone changes.
+    if (edit.phone && !isPhoneValid(edit.phone)) { setErr('手机号格式错误（需11位、第一位为1）'); return; }
+    if (edit.phone !== data.customer?.phone && !edit.changePassword) {
+      setErr('修改手机号需要先输入敏感信息修改密码'); return;
     }
     setBusy(true);
     try {
@@ -62,6 +67,15 @@ export default function MemberDetail() {
 
   if (!data) return <div className="text-sm text-ink-500">加载中…</div>;
   const { member, customer, balances, tier, exams, ledgers, beanBatches } = data;
+
+  // B.5: replace the internal "可用豆批次" concept with a useful "最近到期提醒".
+  const expiryReminder = (() => {
+    const active = (beanBatches || []).filter((b: any) => !b.expired && b.remaining > 0 && b.expiresAt);
+    if (active.length === 0) return null;
+    active.sort((a: any, b: any) => new Date(a.expiresAt).getTime() - new Date(b.expiresAt).getTime());
+    const soonest = active[0];
+    return { remaining: soonest.remaining, expiresAt: soonest.expiresAt };
+  })();
 
   return (
     <div className="space-y-4">
@@ -91,7 +105,9 @@ export default function MemberDetail() {
             <Row label="登记人" value={member?.registeredByName} />
             <Row label="登记门店" value={member?.registeredStoreName} />
             <Row label="办理时间" value={fmtDateTime(member?.registeredAt)} />
-            <Row label="可用豆批次" value={`${beanBatches?.filter((b: any) => !b.expired && b.remaining > 0).length || 0} 批`} />
+            {expiryReminder && (
+              <Row label="豆到期提醒" value={<span className="text-amber-700">有 {expiryReminder.remaining} 豆将于 {fmtDate(expiryReminder.expiresAt)} 到期</span>} />
+            )}
           </Block>
         </div>
       </Card>
@@ -166,7 +182,7 @@ export default function MemberDetail() {
       </Card>
 
       {/* 调整余额/豆/积分 (Ledger 增量) */}
-      <Modal open={showAdj} onClose={() => setShowAdj(false)} title="调整余额/豆/积分（走 Ledger 增量记录，必须填备注，不需 change123 密码）"
+      <Modal open={showAdj} onClose={() => setShowAdj(false)} title="调整余额/豆/积分（走 Ledger 增量记录，必须填备注，无需敏感信息密码）"
         footer={<><Button variant="ghost" onClick={() => setShowAdj(false)}>取消</Button><Button disabled={busy} onClick={submitAdj}>提交</Button></>}>
         <div className="space-y-3">
           <Field label="字段" required>
@@ -184,13 +200,15 @@ export default function MemberDetail() {
         </div>
       </Modal>
 
-      {/* 编辑客户敏感信息（需 change123） */}
-      <Modal open={showEdit} onClose={() => setShowEdit(false)} title="编辑客户信息（修改手机号需 change123 + 二次确认）"
+      {/* 编辑客户敏感信息（需敏感信息修改密码） */}
+      <Modal open={showEdit} onClose={() => setShowEdit(false)} title="编辑客户信息（修改手机号需敏感信息修改密码 + 二次确认）"
         footer={<><Button variant="ghost" onClick={() => setShowEdit(false)}>取消</Button><Button disabled={busy} onClick={submitEdit}>提交</Button></>}>
         <div className="space-y-3">
           <div className="grid grid-cols-2 gap-3">
             <Field label="姓名"><Input value={edit.name} onChange={(e) => setEdit((s) => ({ ...s, name: e.target.value }))} /></Field>
-            <Field label="手机号（修改需填下方密码）"><Input value={edit.phone} onChange={(e) => setEdit((s) => ({ ...s, phone: e.target.value }))} /></Field>
+            <Field label="手机号（修改需填下方密码）">
+              <PhoneInput value={edit.phone} onChange={(e) => setEdit((s) => ({ ...s, phone: e.target.value }))} />
+            </Field>
             <Field label="生日"><Input type="date" value={edit.birthday} onChange={(e) => setEdit((s) => ({ ...s, birthday: e.target.value }))} /></Field>
             <Field label="住址"><Input value={edit.address} onChange={(e) => setEdit((s) => ({ ...s, address: e.target.value }))} /></Field>
           </div>
@@ -199,7 +217,7 @@ export default function MemberDetail() {
               您正在修改手机号，旧号将自动写入曾用手机号历史。修改后该客户名下所有历史检查记录会自动继续显示在详情页（关联 customer_id，不存手机号快照）。
             </div>
           )}
-          <Field label="change123 密码（仅修改手机号时需要）" hint="所有密码不在前端明文展示">
+          <Field label="敏感信息修改密码（仅修改手机号时需要）" hint="所有密码不在前端明文展示">
             <Input type="password" value={edit.changePassword} onChange={(e) => setEdit((s) => ({ ...s, changePassword: e.target.value }))} />
           </Field>
           <Field label="修改原因"><TextArea rows={2} value={edit.reason} onChange={(e) => setEdit((s) => ({ ...s, reason: e.target.value }))} /></Field>

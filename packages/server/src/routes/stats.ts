@@ -33,6 +33,12 @@ statsRouter.get('/revenue', async (req, res) => {
 });
 
 // ---------- Staff performance (§6.4): optical consume, merged tiered commission, open count, brand ----------
+// B.1: every active staff whose depts include 配镜部 must appear (0 if no business),
+//      instead of only those who happened to close an optical payment this month.
+// B.2/E: performance & brand incentives are attributed to the EXAM's registrar
+//      (exam.registeredBy), not payment.operatorId. Since E makes the payment
+//      operator always equal to the registrar, they coincide in practice — but
+//      we still key off the exam so the source of truth is "who did this 配镜 job".
 statsRouter.get('/performance', async (req, res) => {
   const year = Number(req.query.year) || new Date().getFullYear();
   const month = req.query.month ? Number(req.query.month) : new Date().getMonth() + 1;
@@ -41,45 +47,58 @@ statsRouter.get('/performance', async (req, res) => {
   const monthStart = new Date(year, month - 1, 1);
   const monthEnd = new Date(year, month, 1);
 
-  // 配镜部 payments in month by staff -> 实际余额消耗值 = balanceDeduct + beansDeductAmount
-  const payWhere: any = { exam: { dept: 'OPTICAL' }, createdAt: { gte: monthStart, lt: monthEnd } };
-  if (storeId) payWhere.storeId = storeId;
-  const payments = await prisma.payment.findMany({ where: payWhere, include: { exam: true } });
+  // 1. Active staff with 配镜部 in depts (B.1: include everyone, even 0 业绩).
+  const allStaff = await prisma.staff.findMany({ where: { active: true, deletedAt: null } });
+  const opticalStaff = allStaff.filter((s) => (s.depts || '').split(',').map((d) => d.trim()).includes('OPTICAL'));
+  const staffById = new Map(opticalStaff.map((s) => [s.id, s]));
 
+  // 2. 配镜部 exams in month (with payments) — keyed by exam.registeredBy (B.2/E).
+  const examWhere: any = { dept: 'OPTICAL', registeredAt: { gte: monthStart, lt: monthEnd }, deletedAt: null, voidedAt: null };
+  if (storeId) examWhere.registeredStoreId = storeId;
+  const exams = await prisma.examRecord.findMany({ where: examWhere, include: { payment: true } });
+
+  // 业绩 = 实际余额消耗值 (balanceDeduct + beansDeductAmount) of paid optical exams.
   const rawRows: { staffId: string; staffName: string; storeId: string; storeName: string; consumeCents: number }[] = [];
-  for (const p of payments) {
+  const brandByStaff = new Map<string, { lens: Record<string, number>; frame: Record<string, number> }>();
+  for (const e of exams) {
+    const s = staffById.get(e.registeredBy);
+    const staffName = e.registeredByName || s?.name || '';
+    const sid = e.registeredBy;
+    // brand incentives keyed by registrar (B.2) — count every optical exam, paid or not.
+    let b = brandByStaff.get(sid);
+    if (!b) { b = { lens: {}, frame: {} }; brandByStaff.set(sid, b); }
+    if (e.lensBrand) b.lens[e.lensBrand] = (b.lens[e.lensBrand] || 0) + 1;
+    if (e.frameBrand) b.frame[e.frameBrand] = (b.frame[e.frameBrand] || 0) + 1;
+    if (!e.payment) continue; // unpaid exam contributes 0 业绩
     rawRows.push({
-      staffId: p.operatorId, staffName: p.operatorName, storeId: p.storeId, storeName: p.storeName,
-      consumeCents: p.balanceDeduct + p.beansDeductAmount,
+      staffId: sid, staffName,
+      storeId: e.registeredStoreId, storeName: e.registeredStoreName,
+      consumeCents: e.payment.balanceDeduct + e.payment.beansDeductAmount,
     });
   }
   const perf = aggregatePerformance(rawRows as any);
 
-  // open count (members registered by staff in month)
+  // 3. Merge in optical staff with 0 业绩 (B.1) + fill open count + brands.
+  const perfByStaff = new Map(perf.map((p) => [p.staffId, p]));
+  for (const s of opticalStaff) {
+    if (!perfByStaff.has(s.id)) {
+      const empty = { staffId: s.id, staffName: s.name, opticalConsumeCents: 0, storeBreakdown: [], commissionCents: 0, openCount: 0 };
+      perfByStaff.set(s.id, empty as any);
+      perf.push(empty as any);
+    }
+  }
   for (const row of perf) {
     const opened = await prisma.member.count({
       where: { registeredBy: row.staffId, registeredAt: { gte: monthStart, lt: monthEnd } },
     });
     row.openCount = opened;
+    (row as any).brands = brandByStaff.get(row.staffId) || { lens: {}, frame: {} };
   }
-
-  // brand incentives: lens/frame brand counts per staff in optical exams (month)
-  const examWhere: any = { dept: 'OPTICAL', registeredAt: { gte: monthStart, lt: monthEnd }, deletedAt: null };
-  if (storeId) examWhere.registeredStoreId = storeId;
-  const exams = await prisma.examRecord.findMany({ where: examWhere });
-  const brandByStaff = new Map<string, { lens: Record<string, number>; frame: Record<string, number> }>();
-  for (const e of exams) {
-    let b = brandByStaff.get(e.registeredBy);
-    if (!b) { b = { lens: {}, frame: {} }; brandByStaff.set(e.registeredBy, b); }
-    if (e.lensBrand) b.lens[e.lensBrand] = (b.lens[e.lensBrand] || 0) + 1;
-    if (e.frameBrand) b.frame[e.frameBrand] = (b.frame[e.frameBrand] || 0) + 1;
-  }
-  for (const row of perf) (row as any).brands = brandByStaff.get(row.staffId) || { lens: {}, frame: {} };
 
   res.json({ year, month, items: perf, commissionForMerged });
 });
 
-// Single staff across months (柱状图 dimension 2).
+// Single staff across months (柱状图 dimension 2). Keyed by exam.registeredBy (B.2/E).
 statsRouter.get('/performance/:staffId', async (req, res) => {
   const year = Number(req.query.year) || new Date().getFullYear();
   const staffId = req.params.staffId;
@@ -87,16 +106,20 @@ statsRouter.get('/performance/:staffId', async (req, res) => {
   for (let m = 1; m <= 12; m++) {
     const monthStart = new Date(year, m - 1, 1);
     const monthEnd = new Date(year, m, 1);
-    const payments = await prisma.payment.findMany({
-      where: { operatorId: staffId, exam: { dept: 'OPTICAL' }, createdAt: { gte: monthStart, lt: monthEnd } },
-      include: { exam: true },
+    // 配镜部 exams registered by this staff in month, with payments.
+    const exams = await prisma.examRecord.findMany({
+      where: { registeredBy: staffId, dept: 'OPTICAL', registeredAt: { gte: monthStart, lt: monthEnd }, deletedAt: null, voidedAt: null },
+      include: { payment: true },
     });
-    const total = payments.reduce((s, p) => s + p.balanceDeduct + p.beansDeductAmount, 0);
+    let total = 0;
     const storeBreakdown = new Map<string, { storeId: string; storeName: string; consume: number }>();
-    for (const p of payments) {
-      let b = storeBreakdown.get(p.storeId);
-      if (!b) { b = { storeId: p.storeId, storeName: p.storeName, consume: 0 }; storeBreakdown.set(p.storeId, b); }
-      b.consume += p.balanceDeduct + p.beansDeductAmount;
+    for (const e of exams) {
+      if (!e.payment) continue;
+      const consume = e.payment.balanceDeduct + e.payment.beansDeductAmount;
+      total += consume;
+      let b = storeBreakdown.get(e.registeredStoreId);
+      if (!b) { b = { storeId: e.registeredStoreId, storeName: e.registeredStoreName, consume: 0 }; storeBreakdown.set(e.registeredStoreId, b); }
+      b.consume += consume;
     }
     out.push({ month: m, consume: total, commission: commissionForMerged(total), storeBreakdown: [...storeBreakdown.values()] });
   }
@@ -111,7 +134,8 @@ statsRouter.get('/dashboard', async (req, res) => {
 
   const [memberCount, examCount, todayNewMembers, birthdayToday, reviewDue, openAnomalies] = await Promise.all([
     prisma.member.count({ where: { status: 'ACTIVE' } }),
-    prisma.examRecord.count({ where: { deletedAt: null } }),
+    // B.6: voided unpaid drafts are not real business — exclude from the dashboard count.
+    prisma.examRecord.count({ where: { deletedAt: null, voidedAt: null } }),
     prisma.member.count({ where: { registeredAt: { gte: todayStart } } }),
     // birthday today (by month+day)
     prisma.customer.count({
@@ -121,8 +145,9 @@ statsRouter.get('/dashboard', async (req, res) => {
       const customers = await prisma.customer.findMany({ where: { isMember: true, deletedAt: null, birthday: { not: null } }, select: { birthday: true } });
       return customers.filter((c) => { const b = new Date(c.birthday!); return b.getMonth() === now.getMonth() && b.getDate() === now.getDate(); }).length;
     }),
+    // B.6: voided drafts excluded from review-due count.
     prisma.examRecord.count({
-      where: { deletedAt: null, reviewStatus: { in: ['PENDING', 'CONTACTED'] }, reviewDate: { lte: weekLater } },
+      where: { deletedAt: null, voidedAt: null, reviewStatus: { in: ['PENDING', 'CONTACTED'] }, reviewDate: { lte: weekLater } },
     }),
     prisma.anomalyRecord.count({ where: { status: 'OPEN' } }),
   ]);
@@ -221,7 +246,8 @@ statsRouter.get('/export/:type', async (req, res) => {
     }
   } else if (type === 'exams') {
     lines.push(['登记时间', '部门', '姓名', '手机号', '镜片品牌', '镜片价格', '镜架品牌', '镜架价格', '总金额', '复查日期', '复查状态', '登记人', '登记门店'].map(q).join(','));
-    const where: any = { deletedAt: null };
+    // B.6: exclude voided unpaid drafts from export (they're not real business).
+    const where: any = { deletedAt: null, voidedAt: null };
     if (storeId) where.registeredStoreId = storeId;
     const exams = await prisma.examRecord.findMany({ where, include: { customer: true } });
     const { REVIEW_STATUS_LABELS } = await import('@clinic/shared');

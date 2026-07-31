@@ -13,7 +13,7 @@ export default function DeviceSetup() {
 
   // Step 2: device bind
   const [stores, setStores] = useState<any[]>([]);
-  const [password, setPassword] = useState('safe@safe');
+  const [password, setPassword] = useState('');
   const [storeCode, setStoreCode] = useState('');
   const [deviceCode, setDeviceCode] = useState('');
   const [displayName, setDisplayName] = useState('');
@@ -96,8 +96,8 @@ export default function DeviceSetup() {
           请填写后台密码和门店信息完成设备绑定。绑定后该设备产生的所有记录将自动带上此门店标签。
         </p>
         <div className={`space-y-3 ${!serverTested ? 'pointer-events-none opacity-50' : ''}`}>
-          <Field label="后台密码" required hint="部署设备时由后台密码控制，默认 safe@safe">
-            <Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
+          <Field label="后台密码" required hint="部署设备时由后台密码控制">
+            <Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="请输入后台登录密码" />
           </Field>
           <Field label="门店" required>
             <Select value={storeCode} onChange={(e) => setStoreCode(e.target.value)}>

@@ -27,9 +27,10 @@ export async function loadMemberDetail(prisma: PrismaClient, memberId: string) {
     loadBalances(prisma, memberId),
   ]);
   const tier = computeTier(balances.points, tiers as any);
-  // exams for the underlying customer (cross-store, since关联 customer_id)
+  // exams for the underlying customer (cross-store, since关联 customer_id).
+  // B.6: voided unpaid drafts are not real business — exclude them.
   const exams = await prisma.examRecord.findMany({
-    where: { customerId: member.customerId, deletedAt: null },
+    where: { customerId: member.customerId, deletedAt: null, voidedAt: null },
     orderBy: { registeredAt: 'desc' },
   });
   // 代付 records: payments where this member's balance/beans were used

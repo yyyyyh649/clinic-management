@@ -45,7 +45,7 @@ app.use('/api', async (req, _res, next) => {
 // ---- Public API (front-desk daily use + sync + auth) ----
 app.use('/api', syncRouter);            // /api/device/register, /api/push, /api/pull, /api/ping
 const authRouter = express.Router();
-makeAuthRoutes()(authRouter);
+makeAuthRoutes(prisma)(authRouter);
 app.use('/api/auth', authRouter);
 app.use('/api/members', memberRouter);  // incl. /customers/dedup, /search (open for front desk)
 app.use('/api/exams', examRouter);

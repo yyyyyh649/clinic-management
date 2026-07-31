@@ -9,6 +9,7 @@ import {
 import {
   loadMemberDetail, loadBalances, computeAge, memberDaysSince, isPendingReview, reviewDaysRemaining,
 } from '@clinic/shared';
+import { verifyPassword, PASSWORD_KEY } from '../passwords.js';
 
 export const memberRouter = Router();
 
@@ -205,10 +206,11 @@ memberRouter.put('/:id', async (req, res) => {
   const member = await prisma.member.findUnique({ where: { id: req.params.id }, include: { customer: true } });
   if (!member) return res.status(404).json({ error: '会员不存在' });
 
-  // Changing name/phone/birthday counts as 敏感信息修改 -> requires change123 + 二次确认 (client handles 二次)
+  // Changing name/phone/birthday counts as 敏感信息修改 -> requires CHANGE password + 二次确认 (client handles 二次)
   const touchingSensitive = phone !== undefined && phone !== member.customer.phone;
-  if (touchingSensitive && cp !== (process.env.CLINIC_CHANGE_PASSWORD || 'change123')) {
-    return res.status(403).json({ error: '修改手机号需要 change123 密码' });
+  if (touchingSensitive) {
+    const ok = await verifyPassword(prisma, PASSWORD_KEY.CHANGE, cp || '');
+    if (!ok) return res.status(403).json({ error: '修改手机号需要敏感信息修改密码验证通过' });
   }
 
   const customer = member.customer!;

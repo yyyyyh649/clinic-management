@@ -3,7 +3,7 @@
 import type { PrismaClient } from '../generated/client';
 import { v4 as uuid } from 'uuid';
 import {
-  LEDGER_FIELD, LEDGER_SOURCE, DISCOUNT_TYPE, BEAN_REDEEM_MULTIPLE,
+  LEDGER_FIELD, LEDGER_SOURCE, DISCOUNT_TYPE, BEAN_REDEEM_MULTIPLE, formatCents,
 } from './constants.js';
 import { computeBatchExpiry, selectFIFOConsume, type BeanExpirySetting } from './logic/beans.js';
 
@@ -51,6 +51,15 @@ export async function executePayment(prisma: PrismaClient, input: PaymentInput):
   if (!exam) throw new PaymentError('检查记录不存在');
   if (exam.payment) throw new PaymentError('该检查记录已支付');
 
+  // E: the operator for a payment (and every ledger it produces) is ALWAYS the
+  // exam's registrar — registration, exam, review and payment are done by the
+  // same person end-to-end. There is no separate "支付操作人" to pick. Recharge
+  // (not tied to an exam) still selects its own operator.
+  const operatorStaff = await prisma.staff.findUnique({ where: { id: exam.registeredBy } });
+  const operatorId = exam.registeredBy;
+  const operatorName = exam.registeredByName || operatorStaff?.name || '';
+  const operatorMemberId = operatorStaff?.isMember ? operatorStaff.memberId : null;
+
   // 1. base amount
   let baseAmount = 0;
   if (exam.dept === 'OPTICAL') baseAmount = (exam.lensPrice ?? 0) + (exam.framePrice ?? 0);
@@ -91,7 +100,7 @@ export async function executePayment(prisma: PrismaClient, input: PaymentInput):
   const pointsAwarded = input.pointsAwardedOverride ?? beansAwarded;
 
   // 7. award target
-  let awardMemberId = input.awardMemberId || (input.operatorMemberId ? input.operatorMemberId : null);
+  let awardMemberId = input.awardMemberId || (operatorMemberId ? operatorMemberId : null);
   if (beansAwarded > 0 && !awardMemberId) {
     throw new PaymentError('操作人不是会员，无法将豆/积分归属本人，请选择归属会员');
   }
@@ -101,15 +110,23 @@ export async function executePayment(prisma: PrismaClient, input: PaymentInput):
   const setting = input.beanExpiry;
 
   await prisma.$transaction(async (tx) => {
-    // a. balance consume
+    // a. balance consume — with online overdraft guard (B.3): never let the
+    // balance go negative from a single payment. (Offline multi-device races
+    // that merge to a negative still go to the anomaly list — this only拦住
+    // what can be checked at payment time.)
     if (balanceDeduct > 0 && sourceMemberId) {
+      const balRows = await tx.ledger.findMany({ where: { memberId: sourceMemberId, field: LEDGER_FIELD.BALANCE } });
+      const currentBalance = balRows.reduce((s, l) => s + l.delta, 0);
+      if (currentBalance < balanceDeduct) {
+        throw new PaymentError(`余额不足：当前余额 ${formatCents(currentBalance)} 元，不足以抵扣 ${formatCents(balanceDeduct)} 元`);
+      }
       const lid = uuid();
       ledgerIds.push(lid);
       await tx.ledger.create({
         data: {
           id: lid, memberId: sourceMemberId, field: LEDGER_FIELD.BALANCE, delta: -balanceDeduct,
           source: LEDGER_SOURCE.CONSUME, reason: `消费抵扣（检查 ${exam.id}）`, refType: 'PAYMENT', refId: paymentId,
-          operatorId: input.operatorId, operatorName: input.operatorName,
+          operatorId, operatorName,
           storeId: input.storeId, storeName: input.storeName, deviceId: input.deviceId,
         },
       });
@@ -127,9 +144,9 @@ export async function executePayment(prisma: PrismaClient, input: PaymentInput):
         await tx.ledger.create({
           data: {
             id: lid, memberId: sourceMemberId, field: LEDGER_FIELD.BEANS, delta: -take,
-            source: LEDGER_SOURCE.CONSUME, reason: `豆抵扣（检查 ${exam.id}）`, refType: 'PAYMENT', refId: paymentId, beanBatchId: p.batchId,
-            operatorId: input.operatorId, operatorName: input.operatorName,
-            storeId: input.storeId, storeName: input.storeName, deviceId: input.deviceId,
+          source: LEDGER_SOURCE.CONSUME, reason: `豆抵扣（检查 ${exam.id}）`, refType: 'PAYMENT', refId: paymentId, beanBatchId: p.batchId,
+          operatorId, operatorName,
+          storeId: input.storeId, storeName: input.storeName, deviceId: input.deviceId,
           },
         });
         left -= take;
@@ -148,7 +165,7 @@ export async function executePayment(prisma: PrismaClient, input: PaymentInput):
         beansAwarded, pointsAwarded,
         payForMemberId: sourceMemberId, payForMemberName: srcMember?.customer?.name, payForMemberCardNo: srcMember?.cardNo,
         awardMemberId: awardMemberId, awardMemberName: awardMember?.customer?.name,
-        operatorId: input.operatorId, operatorName: input.operatorName,
+        operatorId, operatorName,
         storeId: input.storeId, storeName: input.storeName, deviceId: input.deviceId,
         createdAt: new Date(), updatedAt: new Date(),
       },
@@ -164,7 +181,7 @@ export async function executePayment(prisma: PrismaClient, input: PaymentInput):
         data: {
           id: lidB, memberId: awardMemberId, field: LEDGER_FIELD.BEANS, delta: beansAwarded,
           source: LEDGER_SOURCE.AWARD, reason: `现金消费获得豆（检查 ${exam.id}）`, refType: 'PAYMENT', refId: paymentId, beanBatchId: batchId,
-          operatorId: input.operatorId, operatorName: input.operatorName,
+          operatorId, operatorName,
           storeId: input.storeId, storeName: input.storeName, deviceId: input.deviceId,
         },
       });
@@ -175,7 +192,7 @@ export async function executePayment(prisma: PrismaClient, input: PaymentInput):
         data: {
           id: lidP, memberId: awardMemberId, field: LEDGER_FIELD.POINTS, delta: pointsAwarded,
           source: LEDGER_SOURCE.AWARD, reason: `现金消费获得累计积分（检查 ${exam.id}）`, refType: 'PAYMENT', refId: paymentId,
-          operatorId: input.operatorId, operatorName: input.operatorName,
+          operatorId, operatorName,
           storeId: input.storeId, storeName: input.storeName, deviceId: input.deviceId,
         },
       });

@@ -1,5 +1,10 @@
 // 支付页 (§4): discount, balance/beans deduction, manual cash edit + reason,
 // offline prompt (§4.2), 代付 (§4.3), beans/points award + 归属 (§4.4).
+//
+// E: 支付不再单独选"操作人"——全程沿用检查登记时选的"登记人"作为本单支付及
+//    其产生的全部余额/豆/积分流水的操作人。充值例外（仍单独选操作人，见会员详情）。
+// B.4: 实付金额/获得豆/积分均为预填数值（可直接确认或改），删除"手动修改"勾选框，
+//    改动判断完全交给系统自动比对。
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { api, isElectron } from '../api';
@@ -13,18 +18,16 @@ interface PaymentConfig {
   beansDeduct: string;
   payForMemberId: string;
   cashPaid: string;
-  cashEdited: boolean;
   editReason: string;
   beansAwarded: string;
   pointsAwarded: string;
   awardMemberId: string;
-  registeredById: string;
 }
 
 const empty: PaymentConfig = {
   discountType: '', discountValue: '', balanceDeduct: '', beansDeduct: '',
-  payForMemberId: '', cashPaid: '', cashEdited: false, editReason: '',
-  beansAwarded: '', pointsAwarded: '', awardMemberId: '', registeredById: '',
+  payForMemberId: '', cashPaid: '', editReason: '',
+  beansAwarded: '', pointsAwarded: '', awardMemberId: '',
 };
 
 export default function Payment() {
@@ -36,6 +39,8 @@ export default function Payment() {
   const [searchResults, setSearchResults] = useState<any[]>([]);
   const [searchQ, setSearchQ] = useState('');
   const [cfg, setCfg] = useState<PaymentConfig>(empty);
+  // touched flags: once the user edits a prefilled field, stop auto-syncing it.
+  const [touched, setTouched] = useState({ cash: false, beans: false, points: false });
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState<any>(null);
@@ -45,13 +50,23 @@ export default function Payment() {
     if (!examId) return;
     api.getExam(examId).then((r: any) => {
       setExam(r.exam);
-      // If the underlying customer is a member, preselect them as payFor + award target.
+      // If the underlying customer is a member, preselect them as payFor.
       if (r.customer?.isMember && r.customer?.memberId) {
-        setCfg((c) => ({ ...c, payForMemberId: r.customer.memberId, awardMemberId: r.customer.memberId }));
+        setCfg((c) => ({ ...c, payForMemberId: r.customer.memberId }));
       }
     });
     api.getStaff().then((s: any) => setStaff(s || []));
   }, [examId]);
+
+  // The registrar (登记人) — the single operator for the whole transaction (E).
+  const registrar = exam ? staff.find((s) => s.id === exam.registeredBy) : null;
+  // 归属默认：登记人是会员 -> 归登记人本人；否则需选择其他会员。
+  useEffect(() => {
+    if (registrar?.isMember && registrar.memberId && !cfg.awardMemberId) {
+      setCfg((c) => ({ ...c, awardMemberId: registrar.memberId! }));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [registrar]);
 
   // ---- computed amounts ----
   const baseAmount = exam?.baseAmount || 0;
@@ -71,11 +86,28 @@ export default function Payment() {
   const beansDeductAmount = beansDeductCount; // 1豆 = 1分
   const expectedCash = Math.max(0, afterDiscount - balanceDeductCents - beansDeductAmount);
 
+  // Prefill 实付现金 with the system-calculated value (B.4) until the user edits it.
+  useEffect(() => {
+    if (!touched.cash) setCfg((c) => ({ ...c, cashPaid: fmtCents(expectedCash) }));
+  }, [expectedCash, touched.cash]);
+
   const cashPaidCents = cfg.cashPaid ? parseYuan(cfg.cashPaid) : 0;
   const cashMismatch = cashPaidCents !== expectedCash;
   const needsReason = cashMismatch && !cfg.editReason.trim();
 
   const defaultBeansAwarded = Math.floor(cashPaidCents / 100);
+  // Prefill 获得豆/累计积分 with defaults (B.4) until the user edits them.
+  useEffect(() => {
+    if (!touched.beans) setCfg((c) => ({ ...c, beansAwarded: String(defaultBeansAwarded) }));
+  }, [defaultBeansAwarded, touched.beans]);
+  useEffect(() => {
+    if (!touched.points) {
+      const b = cfg.beansAwarded === '' ? defaultBeansAwarded : (parseInt(cfg.beansAwarded, 10) || 0);
+      setCfg((c) => ({ ...c, pointsAwarded: String(b) }));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cfg.beansAwarded, defaultBeansAwarded, touched.points]);
+
   const beansAwarded = cfg.beansAwarded === '' ? defaultBeansAwarded : (parseInt(cfg.beansAwarded, 10) || 0);
   const pointsAwarded = cfg.pointsAwarded === '' ? beansAwarded : (parseInt(cfg.pointsAwarded, 10) || 0);
 
@@ -100,17 +132,16 @@ export default function Payment() {
 
   async function submit() {
     setErr('');
-    if (!cfg.registeredById) { setErr('请选择操作人'); return; }
     if (beansDeductCount > 0 && beansDeductCount % 100 !== 0) { setErr('豆抵现必须整百使用'); return; }
     if ((balanceDeductCents > 0 || beansDeductCount > 0) && !cfg.payForMemberId) {
       setErr('使用余额/豆抵扣需选择代付会员（本客户为会员或指定他人）'); return;
     }
     if (cashMismatch && !cfg.editReason.trim()) { setErr('实付金额与系统计算不一致，必须填写修改原因'); return; }
-    if ((beansAwarded > 0 || pointsAwarded > 0) && !cfg.awardMemberId) { setErr('操作人不是会员或未选择归属会员，无法发放豆/积分'); return; }
+    if ((beansAwarded > 0 || pointsAwarded > 0) && !cfg.awardMemberId) { setErr('登记人不是会员或未选择归属会员，无法发放豆/积分'); return; }
 
     setBusy(true);
     try {
-      const op = staff.find((s) => s.id === cfg.registeredById);
+      // E: no operator is sent — the server derives it from exam.registeredBy.
       const res = await api.createPayment({
         examId,
         discountType: cfg.discountType || undefined,
@@ -119,14 +150,11 @@ export default function Payment() {
         beansDeductCount,
         payForMemberId: cfg.payForMemberId || undefined,
         cashPaidCents,
-        cashPaidEdited: cfg.cashEdited || cashMismatch,
+        cashPaidEdited: cashMismatch, // auto-detected by the system (B.4)
         editReason: cfg.editReason || undefined,
         beansAwardedOverride: cfg.beansAwarded === '' ? undefined : beansAwarded,
         pointsAwardedOverride: cfg.pointsAwarded === '' ? undefined : pointsAwarded,
         awardMemberId: cfg.awardMemberId || undefined,
-        operatorId: cfg.registeredById,
-        operatorName: op?.name || '',
-        operatorMemberId: op?.isMember ? op.memberId : undefined,
       });
       setDone(res);
     } catch (e: any) {
@@ -145,6 +173,7 @@ export default function Payment() {
             <Row label="折后应付" value={`${fmtCents(done.afterDiscount)} 元`} />
             <Row label="应实付现金" value={`${fmtCents(done.expectedCashPaid)} 元`} />
             <Row label="获得豆" value={`${done.beansAwarded} 豆（同步进累计积分 ${done.pointsAwarded} 分）`} />
+            <Row label="操作人（登记人）" value={exam?.registeredByName || '—'} />
           </div>
           <div className="mt-4 flex gap-2">
             <Button onClick={() => nav('/exam')}>查看检查列表</Button>
@@ -189,6 +218,12 @@ export default function Payment() {
               <span className="text-ink-500">应付基础：</span>
               <span className="text-base font-semibold text-ink-900">{fmtCents(baseAmount)} 元</span>
             </div>
+          </div>
+
+          {/* Operator (read-only, = 登记人, spec E) */}
+          <div className="rounded-md bg-brand-50/60 px-3 py-2 text-sm">
+            <Row label="操作人（沿用登记人）" value={exam.registeredByName || '—'} />
+            <div className="mt-1 text-xs text-ink-500">本单从登记到支付由同一人完成，操作人即检查登记时所选登记人，无需再选。</div>
           </div>
 
           {/* Discount */}
@@ -255,58 +290,52 @@ export default function Payment() {
             )}
           </div>
 
-          {/* Cash payment + manual edit */}
+          {/* Cash payment (prefilled, editable; auto-detect manual change — B.4) */}
           <div className="rounded-md border border-slate-200 p-3">
             <div className="mb-2 text-xs font-semibold text-ink-700">现金支付</div>
             <div className="grid grid-cols-2 gap-3">
               <Field label="实付现金（元）" required>
-                <Input type="number" value={cfg.cashPaid} onChange={(e) => set('cashPaid', e.target.value)} placeholder={`建议 ${fmtCents(expectedCash)}`} />
+                <Input
+                  type="number"
+                  value={cfg.cashPaid}
+                  onChange={(e) => { setTouched((t) => ({ ...t, cash: true })); set('cashPaid', e.target.value); }}
+                />
               </Field>
               <Field label="修改原因（实付与系统计算不一致时必填）" error={needsReason ? '实付与计算不符，必须填写原因' : undefined}>
                 <Input value={cfg.editReason} onChange={(e) => set('editReason', e.target.value)} disabled={!cashMismatch} placeholder={!cashMismatch ? '一致，无需填写' : '如：客户抹零 / 凑整数'} />
               </Field>
             </div>
-            <label className="mt-2 flex items-center gap-2 text-xs text-ink-500">
-              <input type="checkbox" checked={cfg.cashEdited} onChange={(e) => set('cashEdited', e.target.checked)} />
-              我已手动调整实付金额（勾选后系统将记录为手动改）
-            </label>
+            {cashMismatch && (
+              <div className="mt-2 text-xs text-amber-700">实付金额与系统计算（{fmtCents(expectedCash)} 元）不一致，系统将记录为手动修改。</div>
+            )}
           </div>
 
-          {/* Awards + 归属 */}
+          {/* Awards + 归属 (prefilled, editable — B.4) */}
           {cashPaidCents > 0 && (
             <div className="rounded-md border border-slate-200 p-3">
               <div className="mb-2 text-xs font-semibold text-ink-700">豆 / 累计积分 奖励（按 1元=1豆）</div>
               <div className="grid grid-cols-3 gap-3">
                 <Field label="获得豆（可改）">
-                  <Input type="number" value={cfg.beansAwarded} onChange={(e) => set('beansAwarded', e.target.value)} placeholder={`默认 ${defaultBeansAwarded}`} />
+                  <Input type="number" value={cfg.beansAwarded} onChange={(e) => { setTouched((t) => ({ ...t, beans: true })); set('beansAwarded', e.target.value); }} />
                 </Field>
                 <Field label="累计积分（可改）">
-                  <Input type="number" value={cfg.pointsAwarded} onChange={(e) => set('pointsAwarded', e.target.value)} placeholder={`默认 ${beansAwarded}`} />
+                  <Input type="number" value={cfg.pointsAwarded} onChange={(e) => { setTouched((t) => ({ ...t, points: true })); set('pointsAwarded', e.target.value); }} />
                 </Field>
-                <Field label="归属会员" error={!cfg.awardMemberId ? '请选择归属会员' : undefined}>
+                <Field label="归属会员" error={!cfg.awardMemberId ? '登记人不是会员，请选择归属会员' : undefined}>
                   <Select value={cfg.awardMemberId} onChange={(e) => set('awardMemberId', e.target.value)}>
                     <option value="">请选择</option>
-                    {searchResults.map((m) => <option key={m.id} value={m.id}>{m.customer?.name} · {m.cardNo}</option>)}
-                    {exam.customer?.isMember && <option value={exam.customer.memberId}>{exam.customer.name} · 本客户</option>}
+                    {registrar?.isMember && registrar.memberId && <option value={registrar.memberId}>{exam.registeredByName} · 登记人本人</option>}
+                    {searchResults.filter((m) => !registrar || m.id !== registrar.memberId).map((m) => <option key={m.id} value={m.id}>{m.customer?.name} · {m.cardNo}</option>)}
+                    {exam.customer?.isMember && (!registrar || exam.customer.memberId !== registrar.memberId) && <option value={exam.customer.memberId}>{exam.customer.name} · 本客户</option>}
                   </Select>
                 </Field>
               </div>
               <div className="mt-2 text-xs text-ink-500">
-                提示：操作人是会员默认归属本人；不是会员必须选其他会员。点击下方按钮搜索其他会员。
+                提示：登记人是会员默认归属登记人本人；不是会员必须选其他会员。点击下方按钮搜索其他会员。
                 <Button size="sm" variant="ghost" className="ml-2" onClick={() => setShowSearch(true)}>搜索会员</Button>
               </div>
             </div>
           )}
-
-          {/* Operator */}
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="操作人" required>
-              <Select value={cfg.registeredById} onChange={(e) => set('registeredById', e.target.value)}>
-                <option value="">请选择</option>
-                {staff.map((s) => <option key={s.id} value={s.id}>{s.name} ({s.code}){s.isMember ? ' · 会员' : ''}</option>)}
-              </Select>
-            </Field>
-          </div>
 
           {err && <div className="rounded-md bg-rose-50 px-3 py-2 text-sm text-rose-700">{err}</div>}
           <div className="flex justify-end gap-2">

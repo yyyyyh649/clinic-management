@@ -1,8 +1,22 @@
 // 检查登记 (§3.2): customer info → dept template → content → review → 跳支付.
+// C.1: phone uses PhoneInput (realtime validation).
+// C.2: birthday defaults to today.
+// C.5: 复查记录人 removed — only 登记人 remains.
+// C.6: review is "days from now" input, auto-computes the review date.
+// B.9: 登记人 dropdown limited to staff in the selected dept.
 import { useEffect, useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../api';
-import { Button, Card, Field, Input, Select, TextArea, Badge, fmtDate, fmtCents } from '../components/ui';
+import { Button, Card, Field, Input, Select, TextArea, fmtCents } from '../components/ui';
+import { PhoneInput, isPhoneValid } from '../components/PhoneInput';
+import { DEFAULT_REVIEW_DAYS } from '@clinic/shared';
+
+const todayStr = () => new Date().toISOString().slice(0, 10);
+const addDaysStr = (days: number) => {
+  const d = new Date();
+  d.setDate(d.getDate() + days);
+  return d.toISOString().slice(0, 10);
+};
 
 interface Page {
   title: string;
@@ -16,7 +30,7 @@ export default function ExamRegister() {
   const [brands, setBrands] = useState<any[]>([]);
   const [step, setStep] = useState<1 | 2 | 3>(1);
   const [form, setForm] = useState({
-    name: '', phone: '', birthday: '', address: '',
+    name: '', phone: '', birthday: todayStr(), address: '',
     customerId: '', existingMember: null as any,
   });
   const [dept, setDept] = useState<'OPTICAL' | 'EYE'>('OPTICAL');
@@ -24,10 +38,9 @@ export default function ExamRegister() {
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [optical, setOptical] = useState({ lensBrand: '', lensPrice: '', frameBrand: '', framePrice: '' });
   const [eyeTotal, setEyeTotal] = useState('');
-  const [review, setReview] = useState({
-    date: new Date(Date.now() + 90 * 86400000).toISOString().slice(0, 10),
-    reviewerId: '', note: '',
-  });
+  // C.6: review is "N days from now" (default 90), the date is computed & shown read-only.
+  const [reviewDays, setReviewDays] = useState<string>(String(DEFAULT_REVIEW_DAYS));
+  const [reviewNote, setReviewNote] = useState('');
   const [registeredById, setRegisteredById] = useState('');
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
@@ -38,22 +51,32 @@ export default function ExamRegister() {
     api.getBrands().then((b: any) => setBrands(b || []));
   }, []);
 
-  // Templates + reviewer list filtered by dept.
+  // Templates filtered by dept. C.5/B.9: 登记人 also limited to current dept.
   useEffect(() => {
     api.getTemplates(dept).then((t: any) => { setTemplates(t || []); setTemplateId(''); setAnswers({}); });
-  }, [dept]);
-  const reviewerCandidates = useMemo(
-    () => staff.filter((s) => s.depts?.split(',').includes(dept)),
+    // B.9: if the current 登记人 isn't in the new dept's staff list, clear it.
+    setRegisteredById((cur) => {
+      const stillValid = staff.some((s) => s.id === cur && s.depts?.split(',').map((d: string) => d.trim()).includes(dept));
+      return stillValid ? cur : '';
+    });
+  }, [dept, staff]);
+  // C.5: registrar candidates limited to the selected dept (was reviewerCandidates).
+  const registrarCandidates = useMemo(
+    () => staff.filter((s) => (s.depts || '').split(',').map((d: string) => d.trim()).includes(dept)),
     [staff, dept],
   );
 
   const tpl = templates.find((t) => t.id === templateId);
   const tplPages: Page[] = tpl?.pages || [];
 
-  async function checkPhone() {
-    if (!form.phone) { setDedupMsg(''); setForm((f) => ({ ...f, existingMember: null, customerId: '' })); return; }
+  // Computed review date from the days input (C.6).
+  const reviewDaysNum = parseInt(reviewDays, 10);
+  const computedReviewDate = Number.isNaN(reviewDaysNum) ? '' : addDaysStr(reviewDaysNum);
+
+  async function checkPhone(phone: string) {
+    if (!phone || !isPhoneValid(phone)) { setDedupMsg(''); setForm((f) => ({ ...f, existingMember: null, customerId: '' })); return; }
     try {
-      const r = await api.dedupCustomer(form.phone, form.name);
+      const r = await api.dedupCustomer(phone, form.name);
       if (r.found && r.mode === 'reuse') {
         setForm((f) => ({ ...f, customerId: r.customer.id, existingMember: r.customer }));
         setDedupMsg(`已匹配客户「${r.customer.name}」，将复用此客户身份。${r.customer.isMember ? '已是会员。' : '尚未办理会员。'}`);
@@ -69,7 +92,7 @@ export default function ExamRegister() {
 
   function next1() {
     if (!form.name || !form.phone) { setErr('姓名和手机号必填'); return; }
-    if (!/^\d{11}$/.test(form.phone)) { setErr('手机号需为11位'); return; }
+    if (!isPhoneValid(form.phone)) { setErr('手机号格式错误（需11位、第一位为1）'); return; }
     setErr(''); setStep(2);
   }
 
@@ -81,11 +104,10 @@ export default function ExamRegister() {
 
   async function submit() {
     if (!registeredById) { setErr('请选择登记人'); return; }
-    if (!review.reviewerId) { setErr('请选择复查记录人（限当前模板所属部门）'); return; }
+    if (!reviewDays.trim() || Number.isNaN(reviewDaysNum)) { setErr('请填写复查天数'); return; }
     setErr(''); setBusy(true);
     try {
       const reg = staff.find((s) => s.id === registeredById);
-      const rev = staff.find((s) => s.id === review.reviewerId);
       const exam = await api.createExam({
         customerId: form.customerId || undefined,
         name: form.name, phone: form.phone, address: form.address || undefined,
@@ -100,10 +122,8 @@ export default function ExamRegister() {
         frameBrand: dept === 'OPTICAL' ? optical.frameBrand || undefined : undefined,
         framePrice: dept === 'OPTICAL' ? Math.round(parseFloat(optical.framePrice || '0') * 100) : undefined,
         totalAmount: dept === 'EYE' ? Math.round(parseFloat(eyeTotal) * 100) : undefined,
-        reviewDate: review.date,
-        reviewerId: review.reviewerId,
-        reviewerName: rev?.name,
-        reviewNote: review.note || undefined,
+        reviewDate: computedReviewDate, // C.6: derived from days input
+        reviewNote: reviewNote || undefined,
         registeredById, registeredByName: reg?.name || '',
       });
       nav(`/payment/${exam.id}`);
@@ -122,10 +142,14 @@ export default function ExamRegister() {
           <div className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
               <Field label="姓名" required>
-                <Input value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} onBlur={checkPhone} />
+                <Input value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} />
               </Field>
               <Field label="手机号" required>
-                <Input value={form.phone} onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))} onBlur={checkPhone} />
+                <PhoneInput
+                  value={form.phone}
+                  onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))}
+                  onValidChange={(p) => checkPhone(p)}
+                />
               </Field>
               <Field label="生日（可选）" hint="用于自动计算年龄">
                 <Input type="date" value={form.birthday} onChange={(e) => setForm((f) => ({ ...f, birthday: e.target.value }))} />
@@ -247,23 +271,20 @@ export default function ExamRegister() {
         {step === 3 && (
           <div className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
-              <Field label="下次复查时间" required hint="默认90天后">
-                <Input type="date" value={review.date} onChange={(e) => setReview((r) => ({ ...r, date: e.target.value }))} />
+              <Field label="多少天后复查" required hint="默认90天，可改">
+                <Input type="number" value={reviewDays} onChange={(e) => setReviewDays(e.target.value)} />
               </Field>
-              <Field label="复查记录人" required hint={`限${dept === 'OPTICAL' ? '配镜部' : '眼科部'}店员`}>
-                <Select value={review.reviewerId} onChange={(e) => setReview((r) => ({ ...r, reviewerId: e.target.value }))}>
-                  <option value="">请选择</option>
-                  {reviewerCandidates.map((s) => <option key={s.id} value={s.id}>{s.name} ({s.code})</option>)}
-                </Select>
+              <Field label="复查日期（自动计算）">
+                <Input value={computedReviewDate} readOnly />
               </Field>
-              <Field label="登记人" required>
+              <Field label="登记人" required hint={`限${dept === 'OPTICAL' ? '配镜部' : '眼科部'}店员`}>
                 <Select value={registeredById} onChange={(e) => setRegisteredById(e.target.value)}>
                   <option value="">请选择</option>
-                  {staff.map((s) => <option key={s.id} value={s.id}>{s.name} ({s.code})</option>)}
+                  {registrarCandidates.map((s) => <option key={s.id} value={s.id}>{s.name} ({s.code})</option>)}
                 </Select>
               </Field>
               <Field label="备注（可选）">
-                <TextArea rows={1} value={review.note} onChange={(e) => setReview((r) => ({ ...r, note: e.target.value }))} />
+                <TextArea rows={1} value={reviewNote} onChange={(e) => setReviewNote(e.target.value)} />
               </Field>
             </div>
             {err && <div className="rounded-md bg-rose-50 px-3 py-2 text-sm text-rose-700">{err}</div>}

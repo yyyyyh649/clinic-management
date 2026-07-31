@@ -19,5 +19,10 @@ export default defineConfig({
   build: {
     outDir: 'dist-renderer',
     emptyOutDir: true,
+    // The renderer runs inside Electron 33 (Chromium ~130), which supports
+    // top-level await / es2022+. The default vite target (chrome87) is too low
+    // and breaks because @clinic/shared's barrel re-exports the Prisma client
+    // (which uses top-level await in its CLI guard). esnext is safe here.
+    target: 'esnext',
   },
 });

@@ -52,6 +52,17 @@ export default function MemberDetail() {
   if (!data) return <div className="text-sm text-ink-500">加载中…</div>;
   const { member, customer, balances, tier, exams, usagePayments, ledgers, beanBatches } = data;
 
+  // B.5: replace the internal "可用豆批次" concept with a useful "最近到期提醒".
+  // If bean expiry is disabled (all batches have null expiresAt) show nothing;
+  // otherwise find the earliest-expiring batch that still has remaining beans.
+  const expiryReminder = (() => {
+    const active = (beanBatches || []).filter((b: any) => !b.expired && b.remaining > 0 && b.expiresAt);
+    if (active.length === 0) return null;
+    active.sort((a: any, b: any) => new Date(a.expiresAt).getTime() - new Date(b.expiresAt).getTime());
+    const soonest = active[0];
+    return { remaining: soonest.remaining, expiresAt: soonest.expiresAt };
+  })();
+
   return (
     <div className="space-y-4">
       <Card
@@ -82,7 +93,9 @@ export default function MemberDetail() {
             <Row label="登记人" value={member?.registeredByName} />
             <Row label="登记门店" value={member?.registeredStoreName} />
             <Row label="办理时间" value={fmtDateTime(member?.registeredAt)} />
-            <Row label="可用豆批次" value={`${beanBatches?.filter((b: any) => !b.expired && b.remaining > 0).length || 0} 批`} />
+            {expiryReminder && (
+              <Row label="豆到期提醒" value={<span className="text-amber-700">有 {expiryReminder.remaining} 豆将于 {fmtDate(expiryReminder.expiresAt)} 到期</span>} />
+            )}
           </Block>
         </div>
       </Card>
