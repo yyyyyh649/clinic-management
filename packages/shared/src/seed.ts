@@ -84,7 +84,7 @@ export async function runSeed(prisma: PrismaClient): Promise<void> {
 
 // CLI entrypoint.
 if (import.meta.url === `file://${process.argv[1]}`) {
-  const { PrismaClient } = await import('../generated/client');
+  const { PrismaClient } = await import('../generated/client/index.js');
   const prisma = new PrismaClient();
   runSeed(prisma)
     .then(() => prisma.$disconnect())
