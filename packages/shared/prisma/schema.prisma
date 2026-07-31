@@ -147,6 +147,18 @@ model Setting {
   updatedAt DateTime @updatedAt
 }
 
+// ---------- Passwords (DB-stored, bcrypt-hashed) ----------
+// .env values are ONLY used as the initial password on first boot (when no row
+// exists yet). After that, passwords live here and are changed via the admin UI
+// without touching .env or redeploying. Keys: "BACKEND" (login + device bind),
+// "CHANGE" (sensitive-edit二次确认).
+
+model Password {
+  key       String   @id     // "BACKEND" | "CHANGE"
+  hash      String           // bcrypt hash
+  updatedAt DateTime @updatedAt
+}
+
 // ---------- Member (extension of customer) ----------
 
 model Member {
@@ -271,6 +283,10 @@ model ExamRecord {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   deletedAt DateTime?
+  // Voided unpaid drafts (B.6): an exam with no payment can be voided, which
+  // removes it from all lists/stats without going through the recycle bin
+  // (it never constituted a completed business transaction).
+  voidedAt  DateTime?
 
   @@index([customerId])
   @@index([reviewStatus])

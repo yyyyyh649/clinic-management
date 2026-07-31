@@ -25,7 +25,7 @@ export default function Login({ onOk }: { onOk: () => void }) {
         <div className="space-y-3">
           <Field label="后台密码" required>
             <Input type="password" value={password} onChange={(e) => setPassword(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && submit()} placeholder="safe@safe" />
+              onKeyDown={(e) => e.key === 'Enter' && submit()} placeholder="请输入后台密码" />
           </Field>
           {err && <div className="rounded-md bg-rose-50 px-3 py-2 text-sm text-rose-700">{err}</div>}
           <Button className="w-full" disabled={busy} onClick={submit}>{busy ? '登录中…' : '登录'}</Button>

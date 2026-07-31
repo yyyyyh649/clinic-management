@@ -29,7 +29,11 @@ const det = await fetch(B + '/members/' + MID).then(j);
 console.log('  ', JSON.stringify(det.balances), 'tier=', det.tier.name);
 
 console.log('6. revenue (current month)');
-const tok = (await post('/auth/login', { password: 'safe@safe' })).token;
+// Password comes from the DB (seeded from .env on first boot). The test reads
+// it from the env so no real password is hardcoded in this file.
+const BPW = process.env.CLINIC_BACKEND_PASSWORD;
+if (!BPW) { console.log('  SKIP: set CLINIC_BACKEND_PASSWORD env var to run the auth-gated checks'); }
+const tok = BPW ? (await post('/auth/login', { password: BPW })).token : null;
 const rev = await fetch(`${B}/stats/revenue?year=2026&month=7`, { headers: { 'x-backend-token': tok } }).then(j);
 console.log('  optical=', JSON.stringify(rev.month.optical), 'eye=', JSON.stringify(rev.month.eye), 'total=', rev.month.total, 'carryCash=', rev.month.carryCashToNext);
 

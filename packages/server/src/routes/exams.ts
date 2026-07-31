@@ -8,16 +8,20 @@ import { computeAge, reviewDaysRemaining, isPendingReview } from '@clinic/shared
 export const examRouter = Router();
 
 // ---------- List (filters + 需复查置顶 + 登记时间倒序) ----------
+// B.6: by default only PAID exams are returned (未支付的算"进行中的草稿", only in 待支付).
+//      Pass ?include=unpaid to see unpaid drafts (待支付 entry). Voided drafts never show.
 examRouter.get('/', async (req, res) => {
-  const { dept, storeId, status } = req.query as Record<string, string>;
+  const { dept, storeId, status, include } = req.query as Record<string, string>;
   const daysToReview = req.query.daysToReview ? Number(req.query.daysToReview) : undefined;
   const ageMin = req.query.ageMin ? Number(req.query.ageMin) : undefined;
   const ageMax = req.query.ageMax ? Number(req.query.ageMax) : undefined;
 
-  const where: any = { deletedAt: null };
+  const where: any = { deletedAt: null, voidedAt: null };
   if (dept) where.dept = dept;
   if (storeId) where.registeredStoreId = storeId;
   if (status) where.reviewStatus = status;
+  // Default: only paid exams. ?include=unpaid shows unpaid drafts (待支付 list).
+  if (include !== 'unpaid') where.payment = { isNot: null };
 
   const exams = await prisma.examRecord.findMany({
     where,
@@ -61,14 +65,16 @@ examRouter.get('/', async (req, res) => {
 });
 
 // ---------- Detail + customer's full history ----------
+// B.7: payment (if any) is included so the detail page can show the full breakdown.
 examRouter.get('/:id', async (req, res) => {
   const exam = await prisma.examRecord.findUnique({
     where: { id: req.params.id },
     include: { customer: { include: { member: true } }, payment: true },
   });
   if (!exam) return res.status(404).json({ error: '检查记录不存在' });
+  // history excludes voided drafts (B.6).
   const history = await prisma.examRecord.findMany({
-    where: { customerId: exam.customerId, deletedAt: null, id: { not: exam.id } },
+    where: { customerId: exam.customerId, deletedAt: null, voidedAt: null, id: { not: exam.id } },
     orderBy: { registeredAt: 'desc' },
   });
   res.json({ exam: { ...exam, content: exam.content ? JSON.parse(exam.content) : [] }, customer: exam.customer, history, age: computeAge(exam.customer?.birthday) });
@@ -131,6 +137,22 @@ examRouter.put('/:id/review', async (req, res) => {
     data: { reviewStatus, reviewerId, reviewerName, reviewNote },
   });
   res.json(exam);
+});
+
+// ---------- Void an unpaid draft (B.6) ----------
+// Only exams WITHOUT a payment can be voided. Voiding sets voidedAt, removing the
+// draft from all lists/stats without going through the recycle bin (it never
+// constituted a completed business transaction).
+examRouter.post('/:id/void', async (req, res) => {
+  const exam = await prisma.examRecord.findUnique({ where: { id: req.params.id }, include: { payment: true } });
+  if (!exam) return res.status(404).json({ error: '检查记录不存在' });
+  if (exam.voidedAt) return res.status(400).json({ error: '该记录已作废' });
+  if (exam.payment) return res.status(400).json({ error: '已支付的记录不能作废，如需删除请走回收站' });
+  const updated = await prisma.examRecord.update({
+    where: { id: exam.id },
+    data: { voidedAt: new Date() },
+  });
+  res.json({ ok: true, voidedAt: updated.voidedAt });
 });
 
 // ---------- Soft delete (to recycle bin, 30d retention) ----------

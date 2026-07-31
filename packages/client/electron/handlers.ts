@@ -59,6 +59,26 @@ export function registerHandlers(getWin: () => BrowserWindow | null) {
   // forward sync status updates to renderer
   onSyncStatus((s) => { getWin()?.webContents.send('clinic:syncStatus', s); });
 
+  // A: backend admin login — verifies the shared backend password against the
+  // SERVER (single source of truth, same hash the browser admin uses) and returns
+  // a server-issued session token. The renderer embeds the admin SPA with
+  // ?token=<token> so it auto-logs-in. Re-entering /admin always asks for the
+  // password again (no long-term免密).
+  ipcMain.handle('clinic:adminLogin', async (_e, password: string) => {
+    const base = getServerUrl().replace(/\/+$/, '');
+    const r = await fetch(`${base}/api/auth/login`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: password || '' }),
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!r.ok) {
+      const err = (await r.json().catch(() => ({}))) as { error?: string };
+      throw new Error(err.error || '登录失败（无法连接服务器或密码错误）');
+    }
+    const data = (await r.json()) as { token: string; expiresAt: number };
+    return { token: data.token, serverUrl: base };
+  });
+
   // ---- customer dedup + member search ----
   ipcMain.handle('clinic:dedupCustomer', async (_e, { phone, name }: any) => {
     if (!phone) return { found: false };
@@ -125,7 +145,7 @@ export function registerHandlers(getWin: () => BrowserWindow | null) {
     let rows = await Promise.all(members.map(async (m) => {
       const bal = await loadBalances(p(), m.id, now);
       const tier = computeTier(bal.points, tiers as any);
-      const dueExam = await p().examRecord.findFirst({ where: { customerId: m.customerId, deletedAt: null, reviewStatus: { in: ['PENDING', 'CONTACTED'] }, reviewDate: { lte: new Date(now.getTime() + 7 * 86400000) } } });
+      const dueExam = await p().examRecord.findFirst({ where: { customerId: m.customerId, deletedAt: null, voidedAt: null, reviewStatus: { in: ['PENDING', 'CONTACTED'] }, reviewDate: { lte: new Date(now.getTime() + 7 * 86400000) } } });
       return { id: m.id, cardNo: m.cardNo, name: m.customer?.name, phone: m.customer?.phone, birthday: m.customer?.birthday, age: computeAge(m.customer?.birthday), tierName: tier.name, tierLevel: tier.level, points: bal.points, beans: bal.beans, balanceCents: bal.balanceCents, registeredAt: m.registeredAt, daysSince: memberDaysSince(m.registeredAt, now), registeredBy: m.registeredByName, registeredStoreName: m.registeredStoreName, registeredStoreId: m.registeredStoreId, pendingReview: !!dueExam };
     }));
     if (tierLevel) rows = rows.filter((r) => r.tierLevel === Number(tierLevel));
@@ -191,17 +211,20 @@ export function registerHandlers(getWin: () => BrowserWindow | null) {
   ipcMain.handle('clinic:getExam', async (_e, id: string) => {
     const exam = await p().examRecord.findUnique({ where: { id }, include: { customer: { include: { member: true } }, payment: true } });
     if (!exam) throw new Error('检查记录不存在');
-    const history = await p().examRecord.findMany({ where: { customerId: exam.customerId, deletedAt: null, id: { not: exam.id } }, orderBy: { registeredAt: 'desc' } });
+    // B.6: history excludes voided unpaid drafts.
+    const history = await p().examRecord.findMany({ where: { customerId: exam.customerId, deletedAt: null, voidedAt: null, id: { not: exam.id } }, orderBy: { registeredAt: 'desc' } });
     return { exam: { ...exam, content: exam.content ? JSON.parse(exam.content) : [] }, customer: exam.customer, history, age: computeAge(exam.customer?.birthday) };
   });
 
   ipcMain.handle('clinic:listExams', async (_e, filters: any) => {
-    const { dept, storeId, status } = filters || {};
+    const { dept, storeId, status, include } = filters || {};
     const daysToReview = filters.daysToReview ? Number(filters.daysToReview) : undefined;
-    const where: any = { deletedAt: null };
+    const where: any = { deletedAt: null, voidedAt: null };
     if (dept) where.dept = dept;
     if (storeId) where.registeredStoreId = storeId;
     if (status) where.reviewStatus = status;
+    // B.6: default only PAID exams; include=unpaid shows the 待支付 drafts.
+    if (include !== 'unpaid') where.payment = { isNot: null };
     const exams = await p().examRecord.findMany({ where, include: { customer: true, payment: true }, orderBy: { registeredAt: 'desc' } });
     const now = new Date();
     let rows = exams.map((e) => ({ id: e.id, dept: e.dept, deptLabel: e.dept === DEPT.OPTICAL ? '配镜部' : '眼科部', customerName: e.customer?.name, phone: e.customer?.phone, age: computeAge(e.customer?.birthday), registeredBy: e.registeredByName, registeredAt: e.registeredAt, registeredStoreName: e.registeredStoreName, registeredStoreId: e.registeredStoreId, reviewDate: e.reviewDate, reviewStatus: e.reviewStatus, daysToReview: reviewDaysRemaining(e.reviewDate, now), needsReview: isPendingReview(e as any, now), lensBrand: e.lensBrand, frameBrand: e.frameBrand, baseAmount: e.baseAmount, hasPayment: !!e.payment }));
@@ -209,6 +232,16 @@ export function registerHandlers(getWin: () => BrowserWindow | null) {
     const rank = (r: any) => (r.reviewStatus === REVIEW_STATUS.CONTACTED_NO_SHOW ? 2 : r.needsReview ? 0 : 1);
     rows.sort((a, b) => { const ra = rank(a), rb = rank(b); if (ra !== rb) return ra - rb; return new Date(b.registeredAt).getTime() - new Date(a.registeredAt).getTime(); });
     return { items: rows };
+  });
+
+  // B.6: void an unpaid draft (sets voidedAt; only allowed when no payment exists).
+  ipcMain.handle('clinic:voidExam', async (_e, id: string) => {
+    const exam = await p().examRecord.findUnique({ where: { id }, include: { payment: true } });
+    if (!exam) throw new Error('检查记录不存在');
+    if (exam.voidedAt) throw new Error('该记录已作废');
+    if (exam.payment) throw new Error('已支付的记录不能作废，如需删除请走回收站');
+    await p().examRecord.update({ where: { id }, data: { voidedAt: new Date() } });
+    return { ok: true };
   });
 
   ipcMain.handle('clinic:updateReview', async (_e, { id, input }: any) => {

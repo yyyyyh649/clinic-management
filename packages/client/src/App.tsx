@@ -10,12 +10,14 @@ import ExamQuery from './pages/ExamQuery';
 import DeviceSetup from './pages/DeviceSetup';
 import MemberDetail from './pages/MemberDetail';
 import ExamDetail from './pages/ExamDetail';
+import Admin from './pages/Admin';
 
 const NAV = [
   { to: '/member/register', label: '会员登记' },
   { to: '/exam/register', label: '检查登记' },
   { to: '/member', label: '会员查询' },
   { to: '/exam', label: '检查查询' },
+  { to: '/admin', label: '后台管理' },
 ];
 
 function SyncIndicator() {
@@ -32,7 +34,11 @@ function SyncIndicator() {
         {online ? '在线' : '离线'}
       </span>
       {!online && <span className="text-rose-600">· 数据更新于{ageLabel}</span>}
-      {s.pending > 0 && <Badge tone="amber">{s.pending}待传</Badge>}
+      {s.pending > 0 && (
+        <span title={`本机还有 ${s.pending} 条记录尚未同步到云端服务器`} className="cursor-help">
+          <Badge tone="amber">{s.pending}待传</Badge>
+        </span>
+      )}
       {online && s.pending === 0 && (
         <button className="text-ink-500 hover:text-brand-600" onClick={() => api.syncNow()}>立即同步</button>
       )}
@@ -119,6 +125,7 @@ export default function App() {
             <Route path="/member/:id" element={<MemberDetail />} />
             <Route path="/exam" element={<ExamQuery />} />
             <Route path="/exam/:id" element={<ExamDetail />} />
+            <Route path="/admin" element={<Admin />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </main>

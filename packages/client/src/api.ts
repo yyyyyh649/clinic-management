@@ -40,6 +40,12 @@ export const api = {
   getSyncStatus: () => (electronApi ? electronApi.getSyncStatus() : Promise.resolve({ online: true, lastSyncAt: null, pending: 0 })),
   syncNow: () => (electronApi ? electronApi.syncNow() : Promise.resolve({ ok: true })),
 
+  // A: backend admin login (Electron-only). Verifies the shared backend password
+  // against the server and returns { token, serverUrl }. The Admin page embeds
+  // the server admin SPA with ?token=<token> for auto-login.
+  adminLogin: (password: string) =>
+    electronApi ? electronApi.adminLogin(password) : Promise.reject(new Error('后台管理仅在桌面客户端可用')),
+
   // customer dedup + member search (front desk, open)
   dedupCustomer: (phone: string, name: string) =>
     electronApi ? electronApi.dedupCustomer({ phone, name }) : http('GET', `/api/members/customers/dedup?phone=${encodeURIComponent(phone)}&name=${encodeURIComponent(name)}`),
@@ -67,6 +73,9 @@ export const api = {
   },
   updateReview: (id: string, input: any) =>
     electronApi ? electronApi.updateReview({ id, input }) : http('PUT', `/api/exams/${id}/review`, input),
+  // B.6: void an unpaid exam draft.
+  voidExam: (id: string) =>
+    electronApi ? electronApi.voidExam(id) : http('POST', `/api/exams/${id}/void`),
 
   // payments + recharge
   createPayment: (input: any) => (electronApi ? electronApi.createPayment(input) : http('POST', '/api/payments', input)),

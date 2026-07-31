@@ -1,0 +1,58 @@
+# electron-builder config — produces a double-clickable Windows NSIS installer.
+#
+# Build command (run on a Windows machine):
+#   npm -w @clinic/client run dist
+# Output:
+#   packages/client/dist-installer/眼科客户管理系统 Setup 1.0.0.exe
+#
+# Prisma's native query-engine binary is platform-specific, so the installer
+# MUST be built on Windows (run `npm run shared:generate` on Windows first so
+# the Windows engine is downloaded into node_modules). Cross-building from
+# Linux/macOS would ship the wrong engine and the app would crash on launch.
+#
+# The app has no node-gyp native modules (Prisma uses its own engine, not
+# better-sqlite3), so no native compilation toolchain is needed on Windows.
+
+appId: com.clinic.management
+productName: 眼科客户管理系统
+copyright: Copyright © 2026
+
+directories:
+  output: dist-installer
+  buildResources: build-resources
+
+# What goes INTO the app bundle (asar).
+files:
+  - dist-electron/**/*
+  - dist-renderer/**/*
+  - package.json
+  # Production node_modules (electron-builder auto-resolves `dependencies`,
+  # excludes `devDependencies`). This pulls in @clinic/shared, @prisma/client,
+  # react, etc.
+
+# Native binaries / dynamic-loaded files must be unpacked from asar.
+# Prisma's library engine is a .node native addon — it cannot be require()'d
+# from inside an asar archive.
+asarUnpack:
+  - "**/node_modules/@prisma/client/**"
+  - "**/node_modules/.prisma/**"
+  - "**/node_modules/@clinic/shared/generated/**"
+
+# Windows NSIS installer (standard "设置 → 应用 → 卸载" uninstallable).
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  # No code signing (no cert). Windows SmartScreen may warn on first launch —
+  # users click "更多信息 → 仍要运行". Documented in README.
+
+nsis:
+  oneClick: false              # show a normal install wizard (choose dir)
+  perMachine: false            # install per-user (no admin prompt needed)
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: 眼科客户管理系统
+  uninstallDisplayName: 眼科客户管理系统
+  deleteAppDataOnUninstall: false   # keep client.db / device.json so re-install retains data

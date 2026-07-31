@@ -4,6 +4,7 @@ import { prisma } from './db.js';
 import { applySyncRecords, makeSyncRecord, SYNC_TABLES } from '@clinic/shared';
 import type { SyncRecord, SyncTableName } from '@clinic/shared';
 import { recomputeAnomalies } from './anomaly.js';
+import { verifyPassword, PASSWORD_KEY } from './passwords.js';
 
 export const syncRouter = Router();
 
@@ -16,8 +17,9 @@ syncRouter.get('/device/stores', async (_req, res) => {
 // ---- Device registration (front-desk device binds to a store) ----
 syncRouter.post('/device/register', async (req, res) => {
   const { password, storeCode, deviceCode, displayName } = req.body || {};
-  // Backend password required to bind a device (only owner sets up devices).
-  if (password !== (process.env.CLINIC_BACKEND_PASSWORD || 'safe@safe')) {
+  // Backend password required to bind a device (DB-verified; spec F).
+  const ok = await verifyPassword(prisma, PASSWORD_KEY.BACKEND, password || '');
+  if (!ok) {
     return res.status(401).json({ error: '后台密码错误，无法注册设备' });
   }
   const store = await prisma.store.findFirst({ where: { code: storeCode, deletedAt: null } });

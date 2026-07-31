@@ -29,6 +29,9 @@ export const api = {
   logout: () => http('POST', '/api/auth/logout'),
   verifyChange: (password: string) => http<{ ok: boolean }>('POST', '/api/auth/verify-change', { password }),
   sessionValid: () => http<{ valid: boolean }>('GET', '/api/auth/session'),
+  // F: change a password (BACKEND or CHANGE). Requires current password verification first.
+  changePassword: (key: 'BACKEND' | 'CHANGE', current: string, next: string) =>
+    http<{ ok: boolean }>('POST', '/api/auth/change-password', { key, current, next }),
 
   // members / exams
   listMembers: (filters: Record<string, string>) => {
