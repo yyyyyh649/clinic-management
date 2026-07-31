@@ -1,5 +1,6 @@
 // Server configuration. Passwords come from env (defaults match the spec) so they
 // are NOT committed as hardcoded secrets in app code — owner overrides via .env.
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -13,7 +14,10 @@ export const config = {
   changePassword: process.env.CLINIC_CHANGE_PASSWORD || 'change123',
   // Token signing secret (rotates per process; sessions are short-lived & in-memory).
   tokenSecret: process.env.CLINIC_TOKEN_SECRET || 'clinic-dev-token-secret',
-  dbUrl: process.env.DATABASE_URL || `file:${path.resolve(__dirname, '../server.db')}`,
+  // server.db lives at packages/server/server.db in BOTH dev and prod.
+  // dev:  __dirname = packages/server/src            -> ../server.db = packages/server/server.db
+  // prod: __dirname = packages/server/dist/server/src -> ../../../server.db = packages/server/server.db
+  dbUrl: process.env.DATABASE_URL || `file:${path.resolve(__dirname, fs.existsSync(path.resolve(__dirname, '../server.db')) ? '../server.db' : '../../../server.db')}`,
   // Device registration requires the backend password (only owner sets up devices).
   deviceRegisterSecret: process.env.CLINIC_BACKEND_PASSWORD || 'safe@safe',
 };

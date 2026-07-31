@@ -16,7 +16,7 @@
   "scripts": {
     "db:generate": "prisma generate --schema=prisma/schema.prisma",
     "db:push": "prisma db push --schema=prisma/schema.prisma --accept-data-loss",
-    "db:push:server": "DATABASE_URL=file:./server.db prisma db push --schema=prisma/schema.prisma --accept-data-loss",
+    "db:push:server": "DATABASE_URL=file:../../server/server.db prisma db push --schema=prisma/schema.prisma --accept-data-loss",
     "seed": "tsx src/seed.ts",
     "build": "tsc && node --input-type=commonjs -e \"require('node:fs').cpSync('generated','dist/generated',{recursive:true})\""
   },
