@@ -10,7 +10,7 @@
     "dev:electron": "wait-on tcp:5174 && cross-env NODE_ENV=development electron .",
     "build": "tsc -p electron/tsconfig.json && vite build --config vite.config.ts",
     "db:generate": "prisma generate --schema=../shared/prisma/schema.prisma",
-    "db:push": "DATABASE_URL=file:./client.db prisma db push --schema=../shared/prisma/schema.prisma --accept-data-loss"
+    "db:push": "cross-env DATABASE_URL=file:./client.db prisma db push --schema=../shared/prisma/schema.prisma --accept-data-loss"
   },
   "dependencies": {
     "@clinic/shared": "*",
