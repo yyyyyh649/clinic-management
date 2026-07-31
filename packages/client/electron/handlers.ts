@@ -8,6 +8,7 @@ import { getDeviceIdentity, saveDeviceIdentity, getServerUrl, setServerUrl as sa
 import { syncOnce, getSyncStatus, onSyncStatus } from './sync.js';
 import {
   PrismaClient, executePayment, executeRecharge, PaymentError, loadMemberDetail, loadBalances,
+  type DeviceIdentity,
   computeTier, computeAge, memberDaysSince, isPendingReview, reviewDaysRemaining, computeBatchExpiry,
   type BeanExpirySetting,
   LEDGER_FIELD, LEDGER_SOURCE, DISCOUNT_TYPE, BEAN_REDEEM_MULTIPLE, DEPT, DEFAULT_REVIEW_DAYS, REVIEW_STATUS,
@@ -42,8 +43,11 @@ export function registerHandlers(getWin: () => BrowserWindow | null) {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(input),
     });
-    if (!res.ok) throw new Error((await res.json()).error || '注册失败');
-    const identity = await res.json();
+    if (!res.ok) {
+      const err = (await res.json()) as { error?: string };
+      throw new Error(err.error || '注册失败');
+    }
+    const identity = (await res.json()) as DeviceIdentity;
     saveDeviceIdentity(identity);
     // upsert store + device locally so the device row exists in local cache
     await p().store.upsert({ where: { id: identity.storeId }, update: { name: identity.storeName }, create: { id: identity.storeId, code: identity.storeCode, name: identity.storeName } });

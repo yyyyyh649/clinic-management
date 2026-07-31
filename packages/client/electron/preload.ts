@@ -12,7 +12,7 @@ const calls = [
   'getStaff', 'getTiers', 'getTemplates', 'getBrands', 'getStores', 'getSettings',
 ] as const;
 
-const api: Record<string, (...args: any[]) => Promise<any>> = {};
+const api: Record<string, (...args: any[]) => any> = {};
 for (const name of calls) {
   api[name] = (...args: any[]) => ipcRenderer.invoke(`clinic:${name}`, ...args);
 }

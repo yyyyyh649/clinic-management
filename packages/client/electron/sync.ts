@@ -104,7 +104,7 @@ async function pushOnce(): Promise<number> {
     body: JSON.stringify({ deviceId: device.deviceId, records }),
   });
   if (!res.ok) throw new Error(`push failed: ${res.status}`);
-  const body = await res.json();
+  const body = (await res.json()) as { accepted?: number };
   state.lastPushAt = newPushAt;
   return body.accepted || 0;
 }
@@ -118,9 +118,9 @@ async function pullOnce(): Promise<number> {
     body: JSON.stringify({ deviceId: device.deviceId, cursors: state.pullCursors }),
   });
   if (!res.ok) throw new Error(`pull failed: ${res.status}`);
-  const body = await res.json();
+  const body = (await res.json()) as { records?: any[]; cursors?: Record<string, string> };
   await applySyncRecords(prisma, body.records || []);
-  state.pullCursors = { ...state.pullCursors, ...body.cursors };
+  state.pullCursors = { ...state.pullCursors, ...(body.cursors || {}) };
   return (body.records || []).length;
 }
 
