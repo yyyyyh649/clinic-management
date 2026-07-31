@@ -78,14 +78,23 @@ fi
 npm install
 log "生成 Prisma 客户端（下载 arm64 查询引擎，这是 ARM 部署最关键的一步）…"
 npm run shared:generate
-ok "依赖 + Prisma 客户端就绪"
+log "编译 @clinic/shared（server 的 tsc 依赖它的 dist 类型声明，必须先 build）…"
+npm -w @clinic/shared run build
+ok "依赖 + Prisma 客户端 + shared 包就绪"
 
 # Verify the ARM64 engine actually landed on disk.
 ENGINE_FILE="$(find node_modules packages/*/node_modules -name 'libquery_engine-linux-arm64-*.node' -type f 2>/dev/null | head -1 || true)"
 if [[ -n "$ENGINE_FILE" ]]; then
   ok "Prisma ARM64 引擎已下载: $ENGINE_FILE"
-  # Print ELF arch to prove it's really aarch64, not a misnamed x86 binary.
-  file "$ENGINE_FILE" | sed 's/^/    /'
+  # Confirm it's really aarch64 ELF. Prefer `file`, fallback to `readelf -h`,
+  # neither installed → just warn (don't fail — the filename already indicates arm64).
+  if command -v file >/dev/null 2>&1; then
+    file "$ENGINE_FILE" | sed 's/^/    /'
+  elif command -v readelf >/dev/null 2>&1; then
+    readelf -h "$ENGINE_FILE" | grep -E 'Machine|Class' | sed 's/^/    /'
+  else
+    warn "未安装 file/readelf，跳过 ELF 架构二次校验（文件名已含 linux-arm64，可接受）"
+  fi
 else
   die "未找到 arm64 引擎文件！prisma generate 可能下载失败。请检查网络/镜像，或手动运行: BINARY_TARGET=linux-arm64 npx prisma generate --schema=packages/shared/prisma/schema.prisma"
 fi
