@@ -56,11 +56,11 @@ app.use('/api/config', requireBackend, configRouter);
 app.use('/api/stats', requireBackend, statsRouter);
 
 // ---- Serve admin SPA (built by vite into web/dist) ----
-// dev: __dirname = packages/server/src  -> ../web/dist
-// prod: __dirname = packages/server/dist/server/src -> ../../web/dist
+// dev:  __dirname = packages/server/src            -> ../web/dist
+// prod: __dirname = packages/server/dist/server/src -> ../../../web/dist
 const webDist = fs.existsSync(path.resolve(__dirname, '../web/dist'))
   ? path.resolve(__dirname, '../web/dist')
-  : path.resolve(__dirname, '../../web/dist');
+  : path.resolve(__dirname, '../../../web/dist');
 app.use(express.static(webDist));
 app.get('*', (req, res, next) => {
   if (req.path.startsWith('/api/')) return next();
