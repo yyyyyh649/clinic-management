@@ -1,0 +1,23 @@
+{
+  "name": "clinic-management",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "packages/*",
+    "packages/server/web"
+  ],
+  "scripts": {
+    "shared:generate": "npm -w @clinic/shared run db:generate",
+    "shared:seed": "npm -w @clinic/shared run seed",
+    "server:dev": "npm -w @clinic/server run dev",
+    "server:build": "npm -w @clinic/server run build",
+    "client:dev": "npm -w @clinic/client run dev",
+    "client:build": "npm -w @clinic/client run build",
+    "install:all": "npm install && npm run shared:generate",
+    "dev": "concurrently -n shared,server,client -c yellow,cyan,magenta \"npm:shared:generate\" \"npm:server:dev\" \"npm:client:dev\""
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0",
+    "typescript": "^5.6.3"
+  }
+}

@@ -1,0 +1,35 @@
+{
+  "name": "@clinic/shared",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./prisma": "./prisma/schema.prisma",
+    "./generated/client": "./generated/client/index.js"
+  },
+  "scripts": {
+    "db:generate": "prisma generate --schema=prisma/schema.prisma",
+    "db:push": "prisma db push --schema=prisma/schema.prisma --accept-data-loss",
+    "db:push:server": "DATABASE_URL=file:./server.db prisma db push --schema=prisma/schema.prisma --accept-data-loss",
+    "seed": "tsx src/seed.ts",
+    "build": "tsc"
+  },
+  "dependencies": {
+    "@prisma/client": "^5.22.0",
+    "decimal.js": "^10.4.3",
+    "uuid": "^10.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.9.0",
+    "@types/uuid": "^10.0.0",
+    "prisma": "^5.22.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3"
+  },
+  "prisma": {
+    "seed": "tsx src/seed.ts"
+  }
+}
