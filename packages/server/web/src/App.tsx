@@ -67,16 +67,14 @@ export default function App() {
         <div className="text-base font-semibold text-ink-900">眼科客户管理</div>
         <div className="text-xs text-ink-500">连锁后台</div>
       </div>
-      <nav className="flex-1 overflow-auto py-2">
+      <nav className="flex flex-1 flex-col gap-2 overflow-auto p-3">
         {NAV.map((n) => (
           <NavLink
             key={n.to}
             to={n.to}
             end={n.end}
             className={({ isActive }) =>
-              `block border-l-2 px-4 py-2.5 text-sm transition ${
-                isActive ? 'border-brand-500 bg-brand-50 font-medium text-brand-700' : 'border-transparent text-ink-700 hover:bg-slate-50'
-              }`
+              `nav-item ${isActive ? 'nav-item-active' : 'nav-item-default'}`
             }
           >
             {n.label}
@@ -85,7 +83,7 @@ export default function App() {
       </nav>
       <div className="border-t border-slate-100 p-3">
         <button
-          className="w-full rounded-md bg-slate-100 px-3 py-2 text-xs text-ink-700 hover:bg-slate-200"
+          className="nav-item nav-item-default w-full justify-center text-xs"
           onClick={async () => { await api.logout().catch(() => {}); setToken(null); setAuthed(false); nav('/'); }}
         >
           退出登录

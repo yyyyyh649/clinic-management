@@ -53,3 +53,40 @@
 main > .space-y-4 > * + * {
   margin-top: 1rem;
 }
+
+/* ===== 导航/菜单/行内按钮：带边框圆角的标签样式 =====
+   用户反馈：菜单项纯文字平铺、无间距无边框，看不清可点击。
+   统一用 .nav-item + flex gap 布局，hover 有反馈，选中态高亮。
+   用于：侧边栏导航、Config 的 tab 切换、其他行内并列按钮。 */
+.nav-item {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 6px;
+  padding: 8px 14px;
+  border: 1px solid #cbd5e1;            /* slate-300 */
+  border-radius: 8px;
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+  cursor: pointer;
+  transition: background-color 0.15s, border-color 0.15s, color 0.15s;
+  white-space: nowrap;
+  text-decoration: none;
+}
+.nav-item-default {
+  background-color: #ffffff;
+  color: #334155;                       /* slate-700 */
+}
+.nav-item-default:hover {
+  background-color: #f1f5f9;            /* slate-100 */
+  border-color: #94a3b8;                /* slate-400 */
+}
+.nav-item-active {
+  background-color: #eff6ff;            /* blue-50 */
+  border-color: #3b82f6;                /* blue-500 */
+  color: #1d4ed8;                       /* blue-700 */
+  font-weight: 600;
+}
+.nav-item-active:hover {
+  background-color: #dbeafe;            /* blue-100 */
+}

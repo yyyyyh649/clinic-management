@@ -13,13 +13,13 @@ export default function Config() {
         <h1 className="text-lg font-semibold text-ink-900">配置管理</h1>
         <p className="text-xs text-ink-500">所有配置项均可在界面增删改，无需重新部署代码</p>
       </div>
-      <div className="flex gap-1 border-b border-slate-200">
+      <div className="flex flex-wrap gap-2">
         {([
           ['stores', '门店'], ['devices', '设备'], ['staff', '店员'], ['tiers', '档位'],
           ['templates', '检查模板'], ['brands', '品牌'], ['settings', '豆有效期'],
         ] as [Tab, string][]).map(([k, l]) => (
           <button key={k} onClick={() => setTab(k)}
-            className={`-mb-px border-b-2 px-3 py-2 text-sm ${tab === k ? 'border-brand-500 text-brand-700' : 'border-transparent text-ink-500 hover:text-ink-700'}`}>
+            className={`nav-item ${tab === k ? 'nav-item-active' : 'nav-item-default'}`}>
             {l}
           </button>
         ))}
