@@ -1,5 +1,5 @@
 // Barrel: re-export generated Prisma client + all shared logic/types/constants.
-export * from '../generated/client/index.js';
+export * from '../generated/client';
 export * from './constants.js';
 export * from './types.js';
 export * from './logic/ledger.js';

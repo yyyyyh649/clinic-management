@@ -1,6 +1,6 @@
 // Payment + Recharge execution (spec §4). Shared by client (local) and server (admin).
 // All money in cents; beans/points are counts. 1豆 == 1分 (100豆=1元).
-import type { PrismaClient } from '../generated/client/index.js';
+import type { PrismaClient } from '../generated/client';
 import { v4 as uuid } from 'uuid';
 import {
   LEDGER_FIELD, LEDGER_SOURCE, DISCOUNT_TYPE, BEAN_REDEEM_MULTIPLE,
@@ -47,7 +47,7 @@ export interface PaymentResult {
 export class PaymentError extends Error {}
 
 export async function executePayment(prisma: PrismaClient, input: PaymentInput): Promise<PaymentResult> {
-  const exam = await prisma.examRecord.findUnique({ where: { id: input.examId }, include: { customer: true } });
+  const exam = await prisma.examRecord.findUnique({ where: { id: input.examId }, include: { customer: true, payment: true } });
   if (!exam) throw new PaymentError('检查记录不存在');
   if (exam.payment) throw new PaymentError('该检查记录已支付');
 

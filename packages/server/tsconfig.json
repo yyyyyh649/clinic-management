@@ -2,7 +2,7 @@
   "compilerOptions": {
     "target": "ES2022",
     "module": "ESNext",
-    "moduleResolution": "Bundler",
+    "moduleResolution": "Node",
     "lib": ["ES2022"],
     "strict": true,
     "esModuleInterop": true,
@@ -10,8 +10,8 @@
     "resolveJsonModule": true,
     "allowSyntheticDefaultImports": true,
     "outDir": "dist",
-    "rootDir": "."
+    "rootDir": ".."
   },
-  "include": ["src"],
-  "exclude": ["node_modules", "dist", "web"]
+  "include": ["src", "../shared/src"],
+  "exclude": ["node_modules", "dist", "web", "../shared/generated"]
 }

@@ -2,7 +2,7 @@
 // Uses STABLE deterministic ids so server.db and client.db seeds produce identical records
 // that reconcile by id on first sync (no duplicates).
 // All of this is editable in the backend UI afterwards (not hardcoded in app logic).
-import type { PrismaClient } from '../generated/client/index.js';
+import type { PrismaClient } from '../generated/client';
 import { DEPT, SETTING_KEYS } from './constants.js';
 
 // Deterministic id helper.
@@ -84,7 +84,7 @@ export async function runSeed(prisma: PrismaClient): Promise<void> {
 
 // CLI entrypoint.
 if (import.meta.url === `file://${process.argv[1]}`) {
-  const { PrismaClient } = await import('../generated/client/index.js');
+  const { PrismaClient } = await import('../generated/client');
   const prisma = new PrismaClient();
   runSeed(prisma)
     .then(() => prisma.$disconnect())

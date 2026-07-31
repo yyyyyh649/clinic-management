@@ -1,6 +1,6 @@
 // Tier (档位) calculation from cumulative points.
 // Tier is read-only, derived from POINTS. Only manual backend clear-zero resets points.
-import type { TierRule } from '../generated/client/index.js';
+import type { TierRule } from '../../generated/client';
 import type { TierInfo } from '../types.js';
 
 // Sort rules ascending by minPoints; pick highest whose minPoints <= points.

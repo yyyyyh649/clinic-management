@@ -1,5 +1,5 @@
 // DB-accessing helpers shared by server + client. Take a PrismaClient instance.
-import type { PrismaClient } from '../generated/client/index.js';
+import type { PrismaClient } from '../generated/client';
 import { computeBalances, sumLedger } from './logic/ledger.js';
 import { computeTier } from './logic/tier.js';
 import { LEDGER_FIELD, formatDateTime } from './constants.js';

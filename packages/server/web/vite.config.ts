@@ -6,7 +6,7 @@ import path from 'node:path';
 // `npm run build:web` outputs to ../web/dist which the server serves statically.
 export default defineConfig({
   plugins: [react()],
-  root: '.',
+  root: __dirname,
   base: '/',
   resolve: { alias: { '@': path.resolve(__dirname, 'src') } },
   server: {

@@ -1,6 +1,7 @@
 // Ledger accounting: current values are the SUM of append-only deltas, never stored.
-import type { Ledger, BeanBatch } from '../generated/client/index.js';
-import { LEDGER_FIELD, type BalanceSummary } from '../constants.js';
+import type { Ledger, BeanBatch } from '../../generated/client';
+import { LEDGER_FIELD } from '../constants.js';
+import type { BalanceSummary } from '../types.js';
 
 // Sum all deltas by field for a member's ledger entries.
 export function sumLedger(ledgers: Ledger[]): { balanceCents: number; beans: number; points: number } {

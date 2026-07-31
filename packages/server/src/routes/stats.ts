@@ -24,7 +24,7 @@ statsRouter.get('/revenue', async (req, res) => {
   if (storeId) paymentWhere.storeId = storeId;
   const payments = await prisma.payment.findMany({ where: paymentWhere, include: { exam: true } });
   const paymentForRev: PaymentForRevenue[] = payments.map((p) => ({
-    dept: p.exam.dept, cashPaid: p.cashPaid, balanceDeduct: p.balanceDeduct, beansDeductAmount: p.beansDeductAmount, createdAt: p.createdAt,
+    dept: p.exam.dept as 'OPTICAL' | 'EYE', cashPaid: p.cashPaid, balanceDeduct: p.balanceDeduct, beansDeductAmount: p.beansDeductAmount, createdAt: p.createdAt,
   }));
 
   const monthRow = computeRevenue(rechargeForRev, paymentForRev, year, month);
@@ -234,7 +234,7 @@ statsRouter.get('/export/:type', async (req, res) => {
     if (storeId) where.storeId = storeId;
     const pays = await prisma.payment.findMany({ where, include: { exam: true }, orderBy: { createdAt: 'desc' } });
     for (const p of pays) {
-      lines.push([formatDateTime(p.createdAt), p.exam?.dept === 'OPTICAL' ? '配镜部' : '眼科部', p.exam?.customer ? '' : '', formatCents(p.baseAmount), formatCents(p.afterDiscount), formatCents(p.balanceDeduct), p.beansDeduct, formatCents(p.beansDeductAmount), formatCents(p.cashPaid), p.beansAwarded, p.pointsAwarded, p.payForMemberName, p.operatorName, p.storeName].map(q).join(','));
+      lines.push([formatDateTime(p.createdAt), p.exam?.dept === 'OPTICAL' ? '配镜部' : '眼科部', p.exam?.customerId || '', formatCents(p.baseAmount), formatCents(p.afterDiscount), formatCents(p.balanceDeduct), p.beansDeduct, formatCents(p.beansDeductAmount), formatCents(p.cashPaid), p.beansAwarded, p.pointsAwarded, p.payForMemberName, p.operatorName, p.storeName].map(q).join(','));
     }
   } else if (type === 'recharges') {
     lines.push(['充值时间', '卡号', '现金', '储值增加', '赠送豆', '赠送积分', '操作人', '门店'].map(q).join(','));

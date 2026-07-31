@@ -1,5 +1,5 @@
 // Bean batch FIFO consumption + expiry scheduling.
-import type { BeanBatch } from '../generated/client/index.js';
+import type { BeanBatch } from '../../generated/client';
 
 export interface BeanExpirySetting {
   enabled: boolean;

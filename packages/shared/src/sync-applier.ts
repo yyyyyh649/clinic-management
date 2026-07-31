@@ -1,6 +1,6 @@
 // Generic sync record applier — used by BOTH server (push handler) and client (pull applier).
 // Applies a batch of SyncRecord envelopes to a PrismaClient using append-only or LWW semantics.
-import type { PrismaClient } from '../generated/client/index.js';
+import type { PrismaClient } from '../generated/client';
 import { APPEND_ONLY, DATE_FIELDS } from './sync.js';
 import type { SyncRecord, SyncTableName } from './types.js';
 
