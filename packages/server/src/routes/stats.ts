@@ -132,7 +132,7 @@ statsRouter.get('/dashboard', async (req, res) => {
   const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const weekLater = new Date(now.getTime() + 7 * 86400000);
 
-  const [memberCount, examCount, todayNewMembers, birthdayToday, reviewDue, openAnomalies] = await Promise.all([
+  const [memberCount, examCount, todayNewMembers, birthdayToday, reviewDue, openAnomalies, staffCount, brandCount, tierCount, templateCount] = await Promise.all([
     prisma.member.count({ where: { status: 'ACTIVE' } }),
     // B.6: voided unpaid drafts are not real business — exclude from the dashboard count.
     prisma.examRecord.count({ where: { deletedAt: null, voidedAt: null } }),
@@ -150,8 +150,13 @@ statsRouter.get('/dashboard', async (req, res) => {
       where: { deletedAt: null, voidedAt: null, reviewStatus: { in: ['PENDING', 'CONTACTED'] }, reviewDate: { lte: weekLater } },
     }),
     prisma.anomalyRecord.count({ where: { status: 'OPEN' } }),
+    // 配置汇总（用户反馈：在后台查不到总店员数/品牌/档位/模板，补到首页仪表盘）
+    prisma.staff.count({ where: { active: true } }),
+    prisma.brand.count({ where: { active: true } }),
+    prisma.tierRule.count(),
+    prisma.examTemplate.count(),
   ]);
-  res.json({ memberCount, examCount, todayNewMembers, birthdayToday, reviewDue, openAnomalies });
+  res.json({ memberCount, examCount, todayNewMembers, birthdayToday, reviewDue, openAnomalies, staffCount, brandCount, tierCount, templateCount });
 });
 
 // ---------- Anomaly review list (§6.7) ----------

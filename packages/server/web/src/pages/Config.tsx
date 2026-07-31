@@ -110,7 +110,7 @@ function StaffTab() {
     setEditing(null); await load();
   }
   return (
-    <Card title="店员列表" extra={<Button onClick={() => { setEditing({}); setForm({ name: '', code: '', depts: 'OPTICAL', isMember: false, memberId: '', phone: '', active: true }); }}>+ 新增店员</Button>}>
+    <Card title={`店员列表（共 ${items.length} 人，在职 ${items.filter((s) => s.active).length}）`} extra={<Button onClick={() => { setEditing({}); setForm({ name: '', code: '', depts: 'OPTICAL', isMember: false, memberId: '', phone: '', active: true }); }}>+ 新增店员</Button>}>
       <table className="w-full text-sm">
         <thead className="text-xs text-ink-500"><tr className="border-b border-slate-200 text-left"><th className="py-2">姓名</th><th>工号</th><th>部门</th><th>是否会员</th><th>状态</th><th></th></tr></thead>
         <tbody>
@@ -291,11 +291,11 @@ function BrandsTab() {
     setEditing(null); setForm(blank); await load();
   }
   return (
-    <Card title="品牌管理（全连锁共用一套）" extra={<Button onClick={() => { setEditing({}); setForm(blank); }}>+ 新增品牌</Button>}>
+    <Card title={`品牌管理（全连锁共用一套，共 ${items.length} 个，无数量限制）`} extra={<Button onClick={() => { setEditing({}); setForm(blank); }}>+ 新增品牌</Button>}>
       <div className="grid grid-cols-2 gap-4">
         {['LENS', 'FRAME'].map((type) => (
           <div key={type}>
-            <div className="mb-2 text-xs font-semibold text-ink-700">{type === 'LENS' ? '镜片品牌' : '镜架品牌'}</div>
+            <div className="mb-2 text-xs font-semibold text-ink-700">{type === 'LENS' ? `镜片品牌（${items.filter((b) => b.type === type).length}）` : `镜架品牌（${items.filter((b) => b.type === type).length}）`}</div>
             <table className="w-full text-sm">
               <tbody>
                 {items.filter((b) => b.type === type).map((b) => (

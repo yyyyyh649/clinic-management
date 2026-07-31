@@ -22,6 +22,14 @@ export default function Dashboard() {
     { label: '异常待复核', value: d.openAnomalies, tone: 'rose' as const, link: '/anomalies' },
   ];
 
+  // 配置汇总（用户反馈：在后台查不到总店员数/品牌/档位/模板数，补到首页仪表盘方便一眼看到）
+  const configCards = [
+    { label: '在职店员', value: d.staffCount, sub: '点击查看全部店员', link: '/config' },
+    { label: '品牌', value: d.brandCount, sub: '镜片+镜架，全连锁共用', link: '/config' },
+    { label: '会员档位', value: d.tierCount, sub: '最多20档', link: '/config' },
+    { label: '检查模板', value: d.templateCount, sub: '病历/验光单各最多10个', link: '/config' },
+  ];
+
   const chartData = [
     { name: '会员', value: d.memberCount },
     { name: '检查', value: d.examCount },
@@ -35,7 +43,7 @@ export default function Dashboard() {
         <h1 className="text-lg font-semibold text-ink-900">仪表盘</h1>
         <p className="text-xs text-ink-500">关键指标概览</p>
       </div>
-      <div className="grid grid-cols-6 gap-3">
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-6">
         {cards.map((c) => (
           <Link key={c.label} to={c.link} className="card block p-4 hover:shadow-md">
             <div className="text-xs text-ink-500">{c.label}</div>
@@ -44,6 +52,18 @@ export default function Dashboard() {
           </Link>
         ))}
       </div>
+
+      <Card title="配置概览" extra={<Link to="/config" className="text-xs text-brand-600">配置管理 →</Link>}>
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+          {configCards.map((c) => (
+            <Link key={c.label} to={c.link} className="block rounded-md border border-slate-200 p-3 hover:border-brand-300 hover:bg-brand-50/40">
+              <div className="text-xs text-ink-500">{c.label}</div>
+              <div className="mt-1 text-xl font-semibold text-ink-900">{c.value}</div>
+              <div className="mt-0.5 text-xs text-ink-400">{c.sub}</div>
+            </Link>
+          ))}
+        </div>
+      </Card>
 
       <div className="grid grid-cols-2 gap-4">
         <Card title="指标对比">
