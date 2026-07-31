@@ -3,24 +3,21 @@
 # One-click deploy for the eye-clinic management system on Oracle Cloud A1
 # (ARM64 / aarch64 / Ampere) — also works on x86_64.
 #
-# What it does (idempotent — safe to re-run):
-#   1. Checks architecture (warns if not aarch64, but continues)
-#   2. Installs Node.js 20 LTS (ARM64 or x86_64 build) if missing
-#   3. Installs npm deps + generates Prisma client
-#   4. On FIRST run: interactively asks for the two initial passwords and a
-#      token secret, writes them to packages/server/.env (bcrypt-hashed in the
-#      DB after first boot; .env is never needed again after that)
-#   5. Creates the SQLite database (server.db) in ./data/ and applies the schema
-#   6. Builds the server (TypeScript + admin SPA)
-#   7. Installs a systemd service (auto-start on boot + crash restart)
-#   8. Optionally configures Nginx reverse proxy + Let's Encrypt HTTPS
+# Designed for the user's actual A1 environment:
+#   - Node installed via nvm (do NOT apt-install another node — would conflict)
+#   - nginx already installed + enabled (config empty, script fills it in)
+#   - certbot already installed, certificate for <domain> already present
+#     (script REUSES the existing cert instead of re-applying)
+#
+# Run as a NORMAL user (the one with nvm). The script uses `sudo` internally
+# only for the steps that need root (systemd unit, nginx config). This keeps
+# node/npm running under your nvm-managed PATH (sudo would lose nvm's PATH).
+#
+# Idempotent — safe to re-run after `git pull` to rebuild + restart.
 #
 # Usage:
-#   git clone <repo-url> clinic-management && cd clinic-management
+#   git clone -b trae/agent-BlHKA9 <repo-url> clinic-management && cd clinic-management
 #   bash deploy/deploy.sh
-#
-# Re-run after `git pull` to rebuild + restart (skips the password prompt if
-# .env already exists).
 # =============================================================================
 set -euo pipefail
 
@@ -31,9 +28,7 @@ ok()   { echo -e "${C_G}✓${C_0} $*"; }
 warn() { echo -e "${C_Y}!${C_0} $*"; }
 die()  { echo -e "${C_R}✗${C_0} $*" >&2; exit 1; }
 
-# ---- preflight --------------------------------------------------------------
-[[ $EUID -eq 0 ]] || die "请用 root 或 sudo 运行：sudo bash deploy/deploy.sh"
-
+# ---- preflight: run as normal user (nvm lives in user home) -----------------
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_DIR"
 DATA_DIR="$REPO_DIR/data"
@@ -45,50 +40,59 @@ NODE_MAJOR=20
 log "部署目录: $REPO_DIR"
 log "数据目录: $DATA_DIR"
 
+# sudo wrapper — used only for systemd/nginx writes. Pre-validate so a missing
+# password prompt doesn't interrupt mid-script.
+if [[ $EUID -eq 0 ]]; then
+  warn "以 root 运行（不推荐，会丢失 nvm PATH）。建议用普通用户跑本脚本。"
+  SUDO=""
+else
+  sudo -v >/dev/null 2>&1 || die "需要 sudo 权限来配置 systemd/nginx。请确认当前用户在 sudoers。"
+  SUDO="sudo"
+fi
+
 ARCH="$(uname -m)"
 case "$ARCH" in
   aarch64|arm64) ARCH_NORM="arm64"; ok "架构: aarch64 (Oracle A1 Ampere) ✓" ;;
-  x86_64|amd64)  ARCH_NORM="amd64"; warn "架构: x86_64（非 A1 ARM。脚本同样可用，但你之前要求在 ARM64 上验证。）" ;;
+  x86_64|amd64)  ARCH_NORM="amd64"; warn "架构: x86_64（非 A1 ARM。脚本同样可用。）" ;;
   *) die "不支持的架构: $ARCH" ;;
 esac
 
-# ---- 1. Node.js -------------------------------------------------------------
-install_node_deb() {
-  log "通过 NodeSource 安装 Node.js ${NODE_MAJOR} LTS (${ARCH_NORM})…"
-  # NodeSource setup script auto-detects arm64 vs amd64 and configures apt.
-  if ! command -v curl >/dev/null; then apt-get update -y && apt-get install -y curl ca-certificates gnupg; fi
-  curl -fsSL "https://deb.nodesource.com/setup_${NODE_MAJOR}.x" | bash -
-  apt-get install -y nodejs
-}
+# ---- 1. Node.js (use whatever the current PATH provides — typically nvm) ----
+# Do NOT apt-install node: the user has nvm-managed node; apt node would shadow
+# it and break nvm. Just verify version.
+command -v node >/dev/null 2>&1 || die "未找到 node。请用 nvm 装好 Node ${NODE_MAJOR}+ 后重跑：nvm install ${NODE_MAJOR} && nvm use ${NODE_MAJOR}"
+NODE_VER="$(node -v | sed 's/v//; s/\..*//')"
+[[ "$NODE_VER" -ge "$NODE_MAJOR" ]] || die "Node 版本过低 ($(node -v))，请 nvm install ${NODE_MAJOR} 后重跑"
+command -v npm >/dev/null 2>&1 || die "npm 未找到"
+ok "Node: $(node -v)  npm: $(npm -v)  架构: $(node -p 'process.arch')"
+[[ "$(node -p 'process.arch')" == "arm64" ]] && ok "node 是 arm64 构建 ✓" || warn "node 不是 arm64 构建 ($(node -p 'process.arch'))，Prisma 会下载错误引擎，请检查 nvm 装的是否 arm64 版"
 
-if command -v node >/dev/null 2>&1; then
-  NODE_VER="$(node -v | sed 's/v//; s/\..*//')"
-  if [[ "$NODE_VER" -ge "$NODE_MAJOR" ]]; then
-    ok "Node.js 已安装: $(node -v)"
-  else
-    warn "Node.js 版本过低 ($(node -v))，升级到 ${NODE_MAJOR}…"
-    install_node_deb
-  fi
-else
-  install_node_deb
-  ok "Node.js 已安装: $(node -v)"
-fi
-command -v npm >/dev/null 2>&1 || die "npm 未找到，安装异常"
-
-# ---- 2. deps + prisma generate ----------------------------------------------
-log "安装依赖（首次较慢，主要是 Electron 二进制；服务端部署用不到 Electron，但 workspace 会一并装）…"
-# Use a domestic mirror if the default is slow — auto-detected by timing.
-# Set CLINIC_NPM_MIRROR=1 to force, or CLINIC_NPM_MIRROR=0 to skip.
-if [[ "${CLINIC_NPM_MIRROR:-auto}" == "1" ]]; then
+# ---- 2. deps + prisma generate (the ARM64 engine download step) -------------
+log "安装依赖（首次较慢，主要是 Electron 二进制；服务端用不到 Electron 但 workspace 会一并装）…"
+# Optional domestic mirror for faster Electron/prisma binary download.
+if [[ "${CLINIC_NPM_MIRROR:-0}" == "1" ]]; then
   npm config set registry https://registry.npmmirror.com
+  export ELECTRON_MIRROR=https://registry.npmmirror.com/-/binary/electron/
+  export PRISMA_ENGINES_MIRROR=https://registry.npmmirror.com/-/binary/prisma
 fi
 npm install
-npm run shared:generate   # prisma generate — downloads the arm64 query engine on A1
-ok "依赖安装完成"
+log "生成 Prisma 客户端（下载 arm64 查询引擎，这是 ARM 部署最关键的一步）…"
+npm run shared:generate
+ok "依赖 + Prisma 客户端就绪"
+
+# Verify the ARM64 engine actually landed on disk.
+ENGINE_FILE="$(find node_modules packages/*/node_modules -name 'libquery_engine-linux-arm64-*.node' -type f 2>/dev/null | head -1 || true)"
+if [[ -n "$ENGINE_FILE" ]]; then
+  ok "Prisma ARM64 引擎已下载: $ENGINE_FILE"
+  # Print ELF arch to prove it's really aarch64, not a misnamed x86 binary.
+  file "$ENGINE_FILE" | sed 's/^/    /'
+else
+  die "未找到 arm64 引擎文件！prisma generate 可能下载失败。请检查网络/镜像，或手动运行: BINARY_TARGET=linux-arm64 npx prisma generate --schema=packages/shared/prisma/schema.prisma"
+fi
 
 # ---- 3. .env (first run only) ----------------------------------------------
 write_env() {
-  log "首次部署：需要设置初始密码（之后可在后台界面修改，无需再碰 .env）"
+  log "首次部署：设置初始密码（之后可在后台界面修改，无需再碰 .env）"
   local backend_pw change_pw token_secret
   while true; do
     read -r -p "  后台登录密码（至少 6 位）: " backend_pw
@@ -116,8 +120,7 @@ EOF
 }
 
 if [[ -f "$ENV_FILE" ]]; then
-  ok ".env 已存在，跳过密码输入（如需重置密码请进后台界面，或删除此文件后重跑）"
-  # Make sure DATA_DIR exists even on re-run.
+  ok ".env 已存在，跳过密码输入"
   mkdir -p "$DATA_DIR"
 else
   write_env
@@ -125,8 +128,7 @@ fi
 
 # ---- 4. database ------------------------------------------------------------
 log "创建/更新数据库结构（SQLite）…"
-# Run prisma directly with the env's DATABASE_URL so the db lands in DATA_DIR
-# (the workspace npm script hardcodes a different relative path).
+# Use the env's DATABASE_URL (absolute path) so the db lands in DATA_DIR.
 set +u
 export $(grep -v '^#' "$ENV_FILE" | xargs)
 set -u
@@ -138,14 +140,11 @@ log "编译服务器（TypeScript + 后台 SPA）…"
 npm -w @clinic/server run build
 ok "服务器编译完成"
 
-# ---- 6. systemd -------------------------------------------------------------
+# ---- 6. systemd (needs sudo) ------------------------------------------------
 log "配置 systemd 服务（开机自启 + 崩溃自动重启）…"
-# Run as the user that owns the repo (so file perms stay consistent). If run
-# via sudo, SUDO_USER is the real user; otherwise root.
-RUN_USER="${SUDO_USER:-$(stat -c '%U' "$REPO_DIR")}"
-RUN_USER="${RUN_USER:-root}"
-NODE_BIN="$(command -v node)"
-cat > "$SERVICE_FILE" <<EOF
+RUN_USER="$(stat -c '%U' "$REPO_DIR")"   # owner of the repo (your nvm user)
+NODE_BIN="$(command -v node)"             # absolute path to nvm node, usable by systemd
+$SUDO tee "$SERVICE_FILE" >/dev/null <<EOF
 [Unit]
 Description=Eye-Clinic Management Server
 After=network.target
@@ -158,26 +157,26 @@ EnvironmentFile=${ENV_FILE}
 ExecStart=${NODE_BIN} ${REPO_DIR}/packages/server/dist/server/src/index.js
 Restart=always
 RestartSec=5
-# Graceful shutdown
 KillSignal=SIGTERM
 TimeoutStopSec=15
 
 [Install]
 WantedBy=multi-user.target
 EOF
-systemctl daemon-reload
-systemctl enable "$SERVICE_NAME" >/dev/null 2>&1
-systemctl restart "$SERVICE_NAME"
+$SUDO systemctl daemon-reload
+$SUDO systemctl enable "$SERVICE_NAME" >/dev/null 2>&1
+$SUDO systemctl restart "$SERVICE_NAME"
 ok "服务已启动: systemctl status $SERVICE_NAME"
 
-# ---- 7. (optional) Nginx + HTTPS -------------------------------------------
+# ---- 7. (optional) Nginx + HTTPS — reuse existing cert if present -----------
 setup_nginx() {
   log "配置 Nginx 反向代理…"
-  apt-get install -y nginx >/dev/null
-  read -r -p "  你的域名（例如 clinic.example.com，留空则只用 IP+HTTP）: " DOMAIN
+  command -v nginx >/dev/null 2>&1 || { $SUDO apt-get update -y && $SUDO apt-get install -y nginx; }
+
+  read -r -p "  你的域名（例如 eyeclinic.dpdns.org，留空则只用 IP+HTTP）: " DOMAIN
   if [[ -z "$DOMAIN" ]]; then
-    warn "未提供域名，配置为纯 HTTP（仅适合内网测试）。生产建议有域名 + HTTPS。"
-    cat > /etc/nginx/sites-available/clinic <<'EOF'
+    warn "未提供域名，配置为纯 HTTP（仅内网测试）。"
+    $SUDO tee /etc/nginx/sites-available/clinic >/dev/null <<'EOF'
 server {
     listen 80;
     server_name _;
@@ -188,11 +187,40 @@ server {
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 60s;
     }
 }
 EOF
   else
-    cat > /etc/nginx/sites-available/clinic <<EOF
+    CERT_DIR="/etc/letsencrypt/live/${DOMAIN}"
+    if $SUDO test -d "$CERT_DIR"; then
+      ok "检测到已有证书 $CERT_DIR，复用（不重新申请，不影响自动续期）"
+      $SUDO tee /etc/nginx/sites-available/clinic >/dev/null <<EOF
+server {
+    listen 80;
+    server_name ${DOMAIN};
+    return 301 https://\$host\$request_uri;
+}
+server {
+    listen 443 ssl http2;
+    server_name ${DOMAIN};
+    ssl_certificate     ${CERT_DIR}/fullchain.pem;
+    ssl_certificate_key ${CERT_DIR}/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    client_max_body_size 25m;
+    location / {
+        proxy_pass http://127.0.0.1:4000;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_read_timeout 60s;
+    }
+}
+EOF
+    else
+      warn "未找到已有证书 $CERT_DIR，先配 HTTP 再用 certbot 申请"
+      $SUDO tee /etc/nginx/sites-available/clinic >/dev/null <<EOF
 server {
     listen 80;
     server_name ${DOMAIN};
@@ -206,19 +234,20 @@ server {
     }
 }
 EOF
+    fi
   fi
-  ln -sf /etc/nginx/sites-available/clinic /etc/nginx/sites-enabled/clinic
-  rm -f /etc/nginx/sites-enabled/default
-  nginx -t && systemctl reload nginx || die "Nginx 配置有误"
-  ok "Nginx 已配置 (HTTP)"
+  $SUDO ln -sf /etc/nginx/sites-available/clinic /etc/nginx/sites-enabled/clinic
+  $SUDO rm -f /etc/nginx/sites-enabled/default
+  $SUDO nginx -t && $SUDO systemctl reload nginx || die "Nginx 配置有误"
+  ok "Nginx 已配置"
 
-  if [[ -n "$DOMAIN" ]]; then
-    log "申请 Let's Encrypt HTTPS 证书（需要域名已解析到本机）…"
-    apt-get install -y certbot python3-certbot-nginx >/dev/null
-    if certbot --nginx -n --redirect -d "$DOMAIN" --agree-tos -m "admin@${DOMAIN}"; then
+  if [[ -n "$DOMAIN" ]] && ! $SUDO test -d "/etc/letsencrypt/live/${DOMAIN}"; then
+    log "申请 Let's Encrypt 证书…"
+    command -v certbot >/dev/null 2>&1 || $SUDO apt-get install -y certbot python3-certbot-nginx
+    if $SUDO certbot --nginx -n --redirect -d "$DOMAIN" --agree-tos -m "admin@${DOMAIN}"; then
       ok "HTTPS 已启用: https://${DOMAIN}"
     else
-      warn "证书申请失败。请确认域名已解析到本机公网 IP，然后手动运行：certbot --nginx -d ${DOMAIN}"
+      warn "证书申请失败。确认域名已解析到本机后手动: sudo certbot --nginx -d ${DOMAIN}"
     fi
   fi
 }
@@ -227,7 +256,7 @@ read -r -p "是否配置 Nginx 反向代理 + HTTPS？[y/N] " DO_NGINX
 if [[ "${DO_NGINX:-N}" =~ ^[Yy]$ ]]; then
   setup_nginx
 else
-  warn "跳过 Nginx。直接访问 http://<服务器IP>:4000/（明文 HTTP，注意余额/支付等敏感数据）。"
+  warn "跳过 Nginx。直接访问 http://<服务器IP>:4000/（明文 HTTP）。"
 fi
 
 # ---- done -------------------------------------------------------------------
@@ -237,9 +266,6 @@ echo -e "  后台管理:  ${C_G}http://<服务器IP>:4000/${C_0}  （或配置�
 echo -e "  首次登录用 .env 里设置的后台密码"
 echo
 echo -e "  常用命令:"
-echo -e "    systemctl status $SERVICE_NAME      # 查看运行状态"
+echo -e "    systemctl status $SERVICE_NAME      # 查看状态"
 echo -e "    journalctl -u $SERVICE_NAME -f      # 实时日志"
-echo -e "    sudo bash deploy/deploy.sh          # 更新代码后重新构建+重启"
-echo
-warn "ARM64 验证提醒：请在 A1 实例上确认 `node -e \"console.log(process.arch)\"` 输出 arm64，"
-warn "并完成 README 中的双设备断网同步测试后再正式营业。"
+echo -e "    bash deploy/deploy.sh               # git pull 后重新构建+重启"
