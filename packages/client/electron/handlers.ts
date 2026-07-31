@@ -4,7 +4,7 @@
 import { ipcMain, BrowserWindow } from 'electron';
 import { v4 as uuid } from 'uuid';
 import { getPrisma } from './db.js';
-import { getDeviceIdentity, saveDeviceIdentity, getServerUrl } from './device.js';
+import { getDeviceIdentity, saveDeviceIdentity, getServerUrl, setServerUrl as saveServerUrl } from './device.js';
 import { syncOnce, getSyncStatus, onSyncStatus } from './sync.js';
 import {
   PrismaClient, executePayment, executeRecharge, PaymentError, loadMemberDetail, loadBalances,
@@ -34,6 +34,9 @@ export function registerHandlers(getWin: () => BrowserWindow | null) {
     catch { return { ok: false, url: getServerUrl() }; }
   });
   ipcMain.handle('clinic:getDevice', () => getDeviceIdentity());
+  // Server URL management (set before device bind; lets front desk point at remote cloud).
+  ipcMain.handle('clinic:getServerUrl', () => getServerUrl());
+  ipcMain.handle('clinic:setServerUrl', (_e, url: string) => { saveServerUrl(url); return getServerUrl(); });
   ipcMain.handle('clinic:registerDevice', async (_e, input: any) => {
     const res = await fetch(`${getServerUrl()}/api/device/register`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },

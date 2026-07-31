@@ -3,7 +3,7 @@
 import { contextBridge, ipcRenderer } from 'electron';
 
 const calls = [
-  'pingServer', 'getDevice', 'registerDevice',
+  'pingServer', 'getDevice', 'registerDevice', 'getServerUrl', 'setServerUrl',
   'getSyncStatus', 'syncNow',
   'dedupCustomer', 'searchMembers',
   'registerMember', 'getMember', 'listMembers', 'adjustLedger', 'updateMember',

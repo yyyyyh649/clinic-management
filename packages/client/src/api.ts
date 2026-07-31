@@ -32,6 +32,9 @@ export const api = {
   pingServer: () => (electronApi ? electronApi.pingServer() : http('GET', '/api/ping')),
   getDevice: () => (electronApi ? electronApi.getDevice() : Promise.resolve(null)),
   registerDevice: (input: any) => (electronApi ? electronApi.registerDevice(input) : http('POST', '/api/device/register', input)),
+  // server URL (Electron-only; browser uses relative fetch)
+  getServerUrl: () => (electronApi ? electronApi.getServerUrl() : Promise.resolve('')),
+  setServerUrl: (url: string) => (electronApi ? electronApi.setServerUrl(url) : Promise.resolve()),
 
   // sync status (Electron-only concept; browser returns always-online)
   getSyncStatus: () => (electronApi ? electronApi.getSyncStatus() : Promise.resolve({ online: true, lastSyncAt: null, pending: 0 })),

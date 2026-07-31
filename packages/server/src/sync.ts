@@ -7,6 +7,12 @@ import { recomputeAnomalies } from './anomaly.js';
 
 export const syncRouter = Router();
 
+// ---- Public store list for device binding (front desk needs this before local cache exists) ----
+syncRouter.get('/device/stores', async (_req, res) => {
+  const stores = await prisma.store.findMany({ where: { deletedAt: null }, orderBy: { code: 'asc' } });
+  res.json(stores.map((s) => ({ id: s.id, code: s.code, name: s.name })));
+});
+
 // ---- Device registration (front-desk device binds to a store) ----
 syncRouter.post('/device/register', async (req, res) => {
   const { password, storeCode, deviceCode, displayName } = req.body || {};
