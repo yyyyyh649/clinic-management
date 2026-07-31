@@ -9,7 +9,7 @@
     "dev:vite": "vite --config vite.config.ts",
     "dev:electron": "tsc -p electron/tsconfig.json && tsc -p electron/tsconfig.preload.json && node -e \"require('fs').renameSync('dist-electron/preload.js','dist-electron/preload.cjs')\" && wait-on tcp:5174 && cross-env NODE_ENV=development VITE_DEV_SERVER_URL=http://localhost:5174 electron .",
     "build": "tsc -p electron/tsconfig.json && tsc -p electron/tsconfig.preload.json && node -e \"require('fs').renameSync('dist-electron/preload.js','dist-electron/preload.cjs')\" && vite build --config vite.config.ts",
-    "dist": "npm run build && electron-builder --config electron-builder.yml",
+    "dist": "npm run build && node -e \"const fs=require('fs'),p=require('path');const dst='node_modules/@clinic/shared';if(fs.existsSync(dst)){fs.rmSync(dst,{recursive:true,force:true})}fs.mkdirSync(dst,{recursive:true});fs.cpSync('../shared/dist',p.join(dst,'dist'),{recursive:true});fs.cpSync('../shared/generated',p.join(dst,'generated'),{recursive:true});fs.cpSync('../shared/package.json',p.join(dst,'package.json'));console.log('[dist] @clinic/shared 实体拷贝完成')\" && electron-builder --config electron-builder.yml",
     "db:generate": "prisma generate --schema=../shared/prisma/schema.prisma",
     "db:push": "cross-env DATABASE_URL=file:./client.db prisma db push --schema=../shared/prisma/schema.prisma --accept-data-loss"
   },
@@ -31,7 +31,7 @@
     "autoprefixer": "^10.4.20",
     "concurrently": "^9.1.0",
     "cross-env": "^7.0.3",
-    "electron": "^33.2.0",
+    "electron": "33.2.0",
     "electron-builder": "^25.1.8",
     "postcss": "^8.4.49",
     "tailwindcss": "^3.4.15",

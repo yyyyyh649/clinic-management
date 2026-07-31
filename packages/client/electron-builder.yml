@@ -30,6 +30,13 @@ files:
   # excludes `devDependencies`). This pulls in @clinic/shared, @prisma/client,
   # react, etc.
 
+# Files placed OUTSIDE asar, under process.resourcesPath at runtime.
+# db.ts reads schema.sql from process.resourcesPath when app.isPackaged,
+# so the installer must ship it there.
+extraResources:
+  - from: electron/schema.sql
+    to: schema.sql
+
 # Native binaries / dynamic-loaded files must be unpacked from asar.
 # Prisma's library engine is a .node native addon — it cannot be require()'d
 # from inside an asar archive.
