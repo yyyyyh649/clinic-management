@@ -1,0 +1,41 @@
+{
+  "name": "@clinic/client",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "dist-electron/main.js",
+  "scripts": {
+    "dev": "concurrently -k -n vite,electron \"npm:dev:vite\" \"npm:dev:electron\"",
+    "dev:vite": "vite --config vite.config.ts",
+    "dev:electron": "wait-on tcp:5174 && cross-env NODE_ENV=development electron .",
+    "build": "tsc -p electron/tsconfig.json && vite build --config vite.config.ts",
+    "db:generate": "prisma generate --schema=../shared/prisma/schema.prisma",
+    "db:push": "DATABASE_URL=file:./client.db prisma db push --schema=../shared/prisma/schema.prisma --accept-data-loss"
+  },
+  "dependencies": {
+    "@clinic/shared": "*",
+    "@prisma/client": "^5.22.0",
+    "decimal.js": "^10.4.3",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.28.0",
+    "recharts": "^2.13.3",
+    "uuid": "^10.0.0"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@types/uuid": "^10.0.0",
+    "@vitejs/plugin-react": "^4.3.3",
+    "autoprefixer": "^10.4.20",
+    "concurrently": "^9.1.0",
+    "cross-env": "^7.0.3",
+    "electron": "^33.2.0",
+    "postcss": "^8.4.49",
+    "tailwindcss": "^3.4.15",
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.11",
+    "wait-on": "^8.0.1"
+  }
+}
