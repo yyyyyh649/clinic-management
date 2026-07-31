@@ -114,16 +114,16 @@ export default function MemberDetail() {
 
       <Card title="检查记录（跨门店）">
         {exams?.length === 0 ? <EmptyState text="暂无检查记录" /> :
-          <table className="w-full text-sm">
+          <table className="tbl">
             <thead className="text-xs text-ink-500">
-              <tr className="border-b border-slate-200 text-left">
-                <th className="py-2">时间</th><th>部门</th><th>金额</th><th>复查日期</th><th>状态</th><th>登记门店</th>
+              <tr>
+                <th>时间</th><th>部门</th><th>金额</th><th>复查日期</th><th>状态</th><th>登记门店</th>
               </tr>
             </thead>
             <tbody>
               {exams.map((e: any) => (
-                <tr key={e.id} className="border-b border-slate-100">
-                  <td className="py-2">{fmtDateTime(e.registeredAt)}</td>
+                <tr key={e.id}>
+                  <td>{fmtDateTime(e.registeredAt)}</td>
                   <td>{e.dept === 'OPTICAL' ? '配镜部' : '眼科部'}</td>
                   <td>{fmtCents(e.baseAmount)}</td>
                   <td>{fmtDate(e.reviewDate)}</td>
@@ -137,16 +137,16 @@ export default function MemberDetail() {
 
       <Card title="余额/豆/积分 变动明细">
         {ledgers?.length === 0 ? <EmptyState text="暂无流水" /> :
-          <table className="w-full text-sm">
+          <table className="tbl">
             <thead className="text-xs text-ink-500">
-              <tr className="border-b border-slate-200 text-left">
-                <th className="py-2">时间</th><th>字段</th><th>增减</th><th>原因</th><th>来源</th><th>操作人/门店</th>
+              <tr>
+                <th>时间</th><th>字段</th><th>增减</th><th>原因</th><th>来源</th><th>操作人/门店</th>
               </tr>
             </thead>
             <tbody>
               {ledgers.slice(0, 100).map((l: any) => (
-                <tr key={l.id} className="border-b border-slate-100">
-                  <td className="py-2">{fmtDateTime(l.createdAt)}</td>
+                <tr key={l.id}>
+                  <td>{fmtDateTime(l.createdAt)}</td>
                   <td>{fieldLabel(l.field)}</td>
                   <td className={l.delta >= 0 ? 'text-emerald-700' : 'text-rose-700'}>{l.delta >= 0 ? '+' : ''}{l.field === 'BALANCE' ? fmtCents(l.delta) : l.delta}</td>
                   <td className="max-w-xs truncate">{l.reason}</td>
@@ -160,16 +160,16 @@ export default function MemberDetail() {
 
       <Card title="代付使用记录">
         {usage.length === 0 ? <EmptyState text="暂无代付记录" /> :
-          <table className="w-full text-sm">
+          <table className="tbl">
             <thead className="text-xs text-ink-500">
-              <tr className="border-b border-slate-200 text-left">
-                <th className="py-2">时间</th><th>抵扣余额</th><th>抵扣豆</th><th>实付现金</th><th>操作人</th><th>门店</th>
+              <tr>
+                <th>时间</th><th>抵扣余额</th><th>抵扣豆</th><th>实付现金</th><th>操作人</th><th>门店</th>
               </tr>
             </thead>
             <tbody>
               {usage.map((p) => (
-                <tr key={p.id} className="border-b border-slate-100">
-                  <td className="py-2">{fmtDateTime(p.createdAt)}</td>
+                <tr key={p.id}>
+                  <td>{fmtDateTime(p.createdAt)}</td>
                   <td>{fmtCents(p.balanceDeduct)}</td>
                   <td>{p.beansDeduct}</td>
                   <td>{fmtCents(p.cashPaid)}</td>

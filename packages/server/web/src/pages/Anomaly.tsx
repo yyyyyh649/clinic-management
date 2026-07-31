@@ -63,11 +63,11 @@ export default function Anomaly() {
             <div>
               <div className="mb-2 text-xs font-semibold text-ink-700">冲突流水明细</div>
               <div className="max-h-60 overflow-auto rounded-md border border-slate-200">
-                <table className="w-full text-sm">
-                  <thead className="text-xs text-ink-500"><tr className="border-b border-slate-200 text-left"><th className="py-2 px-3">时间</th><th>字段</th><th>增减</th><th>原因</th><th>门店</th></tr></thead>
+                <table className="tbl">
+                  <thead><tr><th>时间</th><th>字段</th><th>增减</th><th>原因</th><th>门店</th></tr></thead>
                   <tbody>
                     {ledgers.map((l) => (
-                      <tr key={l.id} className="border-b border-slate-100">
+                      <tr key={l.id}>
                         <td className="py-2 px-3">{fmtDateTime(l.createdAt)}</td>
                         <td>{l.field === 'BALANCE' ? '卡内余额' : '豆'}</td>
                         <td className={l.delta >= 0 ? 'text-emerald-700' : 'text-rose-700'}>{l.delta >= 0 ? '+' : ''}{l.field === 'BALANCE' ? fmtCents(l.delta) : l.delta}</td>

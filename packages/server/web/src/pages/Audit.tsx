@@ -41,12 +41,12 @@ export default function Audit() {
       <Card title={`共 ${items.length} 条`}>
         {items.length === 0 ? <EmptyState text="暂无日志" /> :
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead className="text-xs text-ink-500"><tr className="border-b border-slate-200 text-left"><th className="py-2">时间</th><th>动作</th><th>类型</th><th>记录ID</th><th>操作人</th><th>详情</th></tr></thead>
+            <table className="tbl">
+              <thead><tr><th>时间</th><th>动作</th><th>类型</th><th>记录ID</th><th>操作人</th><th>详情</th></tr></thead>
               <tbody>
                 {items.map((a) => (
-                  <tr key={a.id} className="border-b border-slate-100">
-                    <td className="py-2">{fmtDateTime(a.createdAt)}</td>
+                  <tr key={a.id}>
+                    <td>{fmtDateTime(a.createdAt)}</td>
                     <td>{actionLabel(a.action)}</td>
                     <td>{a.entityType}</td>
                     <td className="font-mono text-xs">{a.entityId || '—'}</td>

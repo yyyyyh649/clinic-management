@@ -14,12 +14,12 @@ export default function Recycle() {
       </div>
       <Card>
         {items.length === 0 ? <EmptyState text="回收站为空" /> :
-          <table className="w-full text-sm">
-            <thead className="text-xs text-ink-500"><tr className="border-b border-slate-200 text-left"><th className="py-2">类型</th><th>记录ID</th><th>删除时间</th><th>操作人</th><th>来源门店</th><th></th></tr></thead>
+          <table className="tbl">
+            <thead><tr><th>类型</th><th>记录ID</th><th>删除时间</th><th>操作人</th><th>来源门店</th><th></th></tr></thead>
             <tbody>
               {items.map((e) => (
-                <tr key={e.id} className="border-b border-slate-100">
-                  <td className="py-2"><Badge tone="slate">{typeLabel(e.entityType)}</Badge></td>
+                <tr key={e.id}>
+                  <td><Badge tone="slate">{typeLabel(e.entityType)}</Badge></td>
                   <td className="font-mono text-xs">{e.entityId}</td>
                   <td>{fmtDateTime(e.deletedAt)}</td>
                   <td>{e.deletedByName}</td>

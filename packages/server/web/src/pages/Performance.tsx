@@ -71,16 +71,16 @@ export default function Performance() {
 
       <Card title="明细">
         <div className="overflow-x-auto">
-          <table className="w-full text-sm">
+          <table className="tbl">
             <thead className="text-xs text-ink-500">
-              <tr className="border-b border-slate-200 text-left">
-                <th className="py-2">店员</th><th>配镜部业绩</th><th>阶梯提成</th><th>开卡数</th><th>门店拆分</th><th>品牌激励</th><th></th>
+              <tr>
+                <th>店员</th><th>配镜部业绩</th><th>阶梯提成</th><th>开卡数</th><th>门店拆分</th><th>品牌激励</th><th></th>
               </tr>
             </thead>
             <tbody>
               {data.items.map((it: any) => (
-                <tr key={it.staffId} className="border-b border-slate-100">
-                  <td className="py-2 font-medium text-ink-900">{it.staffName}</td>
+                <tr key={it.staffId}>
+                  <td className="font-medium text-ink-900">{it.staffName}</td>
                   <td>{fmtCents(it.opticalConsumeCents)} 元</td>
                   <td className="text-emerald-700">{fmtCents(it.commissionCents)} 元</td>
                   <td>{it.openCount}</td>
@@ -122,12 +122,12 @@ export default function Performance() {
             </ResponsiveContainer>
           </div>
           <div className="mt-3 overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead className="text-xs text-ink-500"><tr className="border-b border-slate-200 text-left"><th className="py-2">月份</th><th>业绩</th><th>提成</th><th>门店拆分</th></tr></thead>
+            <table className="tbl">
+              <thead><tr><th>月份</th><th>业绩</th><th>提成</th><th>门店拆分</th></tr></thead>
               <tbody>
                 {staffDetail.items.map((it: any) => (
-                  <tr key={it.month} className="border-b border-slate-100">
-                    <td className="py-2">{it.month}月</td>
+                  <tr key={it.month}>
+                    <td>{it.month}月</td>
                     <td>{fmtCents(it.consume)}</td>
                     <td>{fmtCents(it.commission)}</td>
                     <td>{it.storeBreakdown.map((b: any) => `${b.storeName}:${fmtCents(b.consume)}`).join(', ') || '—'}</td>

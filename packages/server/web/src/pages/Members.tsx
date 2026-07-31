@@ -60,18 +60,18 @@ export default function Members() {
         {loading ? <EmptyState text="加载中…" /> :
           items.length === 0 ? <EmptyState text="暂无会员" /> :
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+            <table className="tbl">
               <thead className="text-xs text-ink-500">
-                <tr className="border-b border-slate-200 text-left">
-                  <th className="py-2">姓名</th><th>手机号</th><th>卡号</th><th>生日/年龄</th>
+                <tr>
+                  <th>姓名</th><th>手机号</th><th>卡号</th><th>生日/年龄</th>
                   <th>档位</th><th>累计积分</th><th>豆</th><th>余额</th>
                   <th>成为会员</th><th>登记人</th><th>登记门店</th><th>复查</th>
                 </tr>
               </thead>
               <tbody>
                 {items.map((m) => (
-                  <tr key={m.id} className="border-b border-slate-100 hover:bg-slate-50 cursor-pointer" onClick={() => nav(`/members/${m.id}`)}>
-                    <td className="py-2 font-medium text-ink-900">{m.name}</td>
+                  <tr key={m.id} className="cursor-pointer" onClick={() => nav(`/members/${m.id}`)}>
+                    <td className="font-medium text-ink-900">{m.name}</td>
                     <td>{m.phone}</td>
                     <td>{m.cardNo}</td>
                     <td>{fmtDate(m.birthday)}{m.age != null ? ` / ${m.age}岁` : ''}</td>

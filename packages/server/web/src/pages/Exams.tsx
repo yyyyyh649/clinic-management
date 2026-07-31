@@ -48,17 +48,17 @@ export default function Exams() {
       <Card>
         {loading ? <EmptyState text="加载中…" /> : items.length === 0 ? <EmptyState text="暂无检查记录" /> :
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+            <table className="tbl">
               <thead className="text-xs text-ink-500">
-                <tr className="border-b border-slate-200 text-left">
-                  <th className="py-2">登记时间</th><th>姓名</th><th>手机号</th><th>年龄</th>
+                <tr>
+                  <th>登记时间</th><th>姓名</th><th>手机号</th><th>年龄</th>
                   <th>部门</th><th>金额</th><th>距复查</th><th>登记人</th><th>登记门店</th><th>状态</th>
                 </tr>
               </thead>
               <tbody>
                 {items.map((e) => (
                   <tr key={e.id} className="border-b border-slate-100 hover:bg-slate-50">
-                    <td className="py-2">{fmtDateTime(e.registeredAt)}</td>
+                    <td>{fmtDateTime(e.registeredAt)}</td>
                     <td className="font-medium text-ink-900">{e.customerName}</td>
                     <td>{e.phone}</td>
                     <td>{e.age != null ? `${e.age}岁` : '—'}</td>

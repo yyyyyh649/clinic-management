@@ -50,12 +50,12 @@ function StoresTab() {
   }
   return (
     <Card title="门店列表" extra={<Button onClick={() => { setEditing({}); setForm({ code: '', name: '' }); }}>+ 新增门店</Button>}>
-      <table className="w-full text-sm">
-        <thead className="text-xs text-ink-500"><tr className="border-b border-slate-200 text-left"><th className="py-2">编码</th><th>名称</th><th>创建时间</th><th></th></tr></thead>
+      <table className="tbl">
+        <thead><tr><th>编码</th><th>名称</th><th>创建时间</th><th></th></tr></thead>
         <tbody>
           {items.map((s) => (
-            <tr key={s.id} className="border-b border-slate-100">
-              <td className="py-2">{s.code}</td><td>{s.name}</td><td>{fmtDate(s.createdAt)}</td>
+            <tr key={s.id}>
+              <td>{s.code}</td><td>{s.name}</td><td>{fmtDate(s.createdAt)}</td>
               <td><Button size="sm" variant="ghost" onClick={() => { setEditing(s); setForm({ code: s.code, name: s.name }); }}>编辑</Button></td>
             </tr>
           ))}
@@ -80,12 +80,12 @@ function DevicesTab() {
   return (
     <Card title="已绑定设备">
       {items.length === 0 ? <EmptyState text="暂无设备" /> :
-        <table className="w-full text-sm">
-          <thead className="text-xs text-ink-500"><tr className="border-b border-slate-200 text-left"><th className="py-2">设备编码</th><th>名称</th><th>所属门店</th><th>绑定时间</th><th>最后同步</th><th></th></tr></thead>
+        <table className="tbl">
+          <thead><tr><th>设备编码</th><th>名称</th><th>所属门店</th><th>绑定时间</th><th>最后同步</th><th></th></tr></thead>
           <tbody>
             {items.map((d) => (
-              <tr key={d.id} className="border-b border-slate-100">
-                <td className="py-2">{d.deviceCode}</td><td>{d.displayName || '—'}</td><td>{d.store?.name}</td>
+              <tr key={d.id}>
+                <td>{d.deviceCode}</td><td>{d.displayName || '—'}</td><td>{d.store?.name}</td>
                 <td>{fmtDateTime(d.boundAt)}</td><td>{fmtDateTime(d.lastSyncAt)}</td>
                 <td><Button size="sm" variant="ghost" onClick={() => { if (confirm('确定删除此设备？')) api.deleteDevice(d.id).then(load); }}>删除</Button></td>
               </tr>
@@ -111,12 +111,12 @@ function StaffTab() {
   }
   return (
     <Card title={`店员列表（共 ${items.length} 人，在职 ${items.filter((s) => s.active).length}）`} extra={<Button onClick={() => { setEditing({}); setForm({ name: '', code: '', depts: 'OPTICAL', isMember: false, memberId: '', phone: '', active: true }); }}>+ 新增店员</Button>}>
-      <table className="w-full text-sm">
-        <thead className="text-xs text-ink-500"><tr className="border-b border-slate-200 text-left"><th className="py-2">姓名</th><th>工号</th><th>部门</th><th>是否会员</th><th>状态</th><th></th></tr></thead>
+      <table className="tbl">
+        <thead><tr><th>姓名</th><th>工号</th><th>部门</th><th>是否会员</th><th>状态</th><th></th></tr></thead>
         <tbody>
           {items.map((s) => (
-            <tr key={s.id} className="border-b border-slate-100">
-              <td className="py-2">{s.name}</td><td>{s.code}</td>
+            <tr key={s.id}>
+              <td>{s.name}</td><td>{s.code}</td>
               <td>{s.depts.split(',').map((d: string) => d === 'OPTICAL' ? '配镜部' : '眼科部').join('、')}</td>
               <td>{s.isMember ? <Badge tone="blue">会员</Badge> : '—'}</td>
               <td>{s.active ? <Badge tone="green">在职</Badge> : <Badge tone="slate">停用</Badge>}</td>
@@ -163,12 +163,12 @@ function TiersTab() {
   }
   return (
     <Card title="会员档位（最多20档，累计积分清零只影响档位判定，不影响豆）" extra={<Button onClick={() => { setEditing({}); setForm(blank); }}>+ 新增档位</Button>}>
-      <table className="w-full text-sm">
-        <thead className="text-xs text-ink-500"><tr className="border-b border-slate-200 text-left"><th className="py-2">档位</th><th>所需累计积分</th><th>清零周期</th><th></th></tr></thead>
+      <table className="tbl">
+        <thead><tr><th>档位</th><th>所需累计积分</th><th>清零周期</th><th></th></tr></thead>
         <tbody>
           {items.map((t) => (
-            <tr key={t.id} className="border-b border-slate-100">
-              <td className="py-2">{t.name} (Lv.{t.level})</td><td>{t.minPoints}</td>
+            <tr key={t.id}>
+              <td>{t.name} (Lv.{t.level})</td><td>{t.minPoints}</td>
               <td>{t.clearEnabled ? `${t.clearPeriod === 'YEAR' ? '每年' : '每月'}${t.clearPeriod === 'YEAR' ? `${t.clearMonth}月` : ''}${t.clearDay}日` : '不清零'}</td>
               <td>
                 <Button size="sm" variant="ghost" onClick={() => { setEditing(t); setForm({ ...blank, ...t, clearMonth: t.clearMonth || '', clearDay: t.clearDay || '' }); }}>编辑</Button>
@@ -218,12 +218,12 @@ function TemplatesTab() {
   }
   return (
     <Card title="检查模板编辑（病历/验光单各最多10个，支持多页+选择题/填空题，选择题最后一项默认是其他）" extra={<Button onClick={() => { setEditing({}); setForm(blank); }}>+ 新增模板</Button>}>
-      <table className="w-full text-sm">
-        <thead className="text-xs text-ink-500"><tr className="border-b border-slate-200 text-left"><th className="py-2">名称</th><th>部门</th><th>页数</th><th>状态</th><th></th></tr></thead>
+      <table className="tbl">
+        <thead><tr><th>名称</th><th>部门</th><th>页数</th><th>状态</th><th></th></tr></thead>
         <tbody>
           {items.map((t) => (
-            <tr key={t.id} className="border-b border-slate-100">
-              <td className="py-2">{t.name}</td><td>{t.dept === 'OPTICAL' ? '配镜部' : '眼科部'}</td>
+            <tr key={t.id}>
+              <td>{t.name}</td><td>{t.dept === 'OPTICAL' ? '配镜部' : '眼科部'}</td>
               <td>{t.pages?.length || 0}</td><td>{t.isActive ? <Badge tone="green">启用</Badge> : <Badge tone="slate">停用</Badge>}</td>
               <td>
                 <Button size="sm" variant="ghost" onClick={() => { setEditing(t); setForm({ name: t.name, dept: t.dept, pages: t.pages || [] }); }}>编辑</Button>
@@ -296,11 +296,11 @@ function BrandsTab() {
         {['LENS', 'FRAME'].map((type) => (
           <div key={type}>
             <div className="mb-2 text-xs font-semibold text-ink-700">{type === 'LENS' ? `镜片品牌（${items.filter((b) => b.type === type).length}）` : `镜架品牌（${items.filter((b) => b.type === type).length}）`}</div>
-            <table className="w-full text-sm">
+            <table className="tbl">
               <tbody>
                 {items.filter((b) => b.type === type).map((b) => (
-                  <tr key={b.id} className="border-b border-slate-100">
-                    <td className="py-2">{b.name}</td>
+                  <tr key={b.id}>
+                    <td>{b.name}</td>
                     <td className="text-right">
                       <Button size="sm" variant="ghost" onClick={() => { setEditing(b); setForm({ name: b.name, type: b.type, sortIndex: b.sortIndex, active: b.active }); }}>编辑</Button>
                     </td>
