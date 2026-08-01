@@ -11,9 +11,9 @@ import {
   createExam as createExamSvc, getExamDetail, listExams, voidExam,
   updateReviewStatus, updateExam as updateExamSvc, ExamError,
   type DeviceIdentity,
-  computeTier, computeAge, memberDaysSince, isPendingReview, reviewDaysRemaining, computeBatchExpiry,
+  computeTier, computeAge, memberDaysSince, computeBatchExpiry,
   type BeanExpirySetting,
-  LEDGER_FIELD, LEDGER_SOURCE, DISCOUNT_TYPE, BEAN_REDEEM_MULTIPLE, DEPT, parseYuanToCents,
+  LEDGER_FIELD, LEDGER_SOURCE, DISCOUNT_TYPE, BEAN_REDEEM_MULTIPLE, parseYuanToCents,
 } from '@clinic/shared';
 
 function p() { return getPrisma(); }

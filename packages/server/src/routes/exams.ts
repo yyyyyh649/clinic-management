@@ -1,6 +1,9 @@
 // Exam routes (admin SPA). Mounted under requireBackend.
 // Uses shared exam-service for CRUD logic (same pattern as payment-service),
 // so server and Electron client share ONE implementation.
+// ExamError carries its own HTTP status (404 for not-found, 400 for validation/
+// business failures), so each catch just forwards e.status — no per-route
+// hardcoding that could drift from the service's intent.
 import { Router } from 'express';
 import { prisma } from '../db.js';
 import {
@@ -21,7 +24,7 @@ examRouter.get('/', async (req, res) => {
     const result = await listExams(prisma, { dept, storeId, status, include, daysToReview, ageMin, ageMax });
     res.json(result);
   } catch (e: any) {
-    if (e instanceof ExamError) return res.status(400).json({ error: e.message });
+    if (e instanceof ExamError) return res.status(e.status).json({ error: e.message });
     throw e;
   }
 });
@@ -31,7 +34,7 @@ examRouter.get('/:id', async (req, res) => {
   try {
     res.json(await getExamDetail(prisma, req.params.id));
   } catch (e: any) {
-    if (e instanceof ExamError) return res.status(404).json({ error: e.message });
+    if (e instanceof ExamError) return res.status(e.status).json({ error: e.message });
     throw e;
   }
 });
@@ -41,7 +44,7 @@ examRouter.post('/', async (req, res) => {
   try {
     res.json(await createExamSvc(prisma, req.body || {}));
   } catch (e: any) {
-    if (e instanceof ExamError) return res.status(400).json({ error: e.message });
+    if (e instanceof ExamError) return res.status(e.status).json({ error: e.message });
     throw e;
   }
 });
@@ -57,7 +60,7 @@ examRouter.put('/:id', async (req, res) => {
   try {
     res.json(await updateExamSvc(prisma, req.params.id, rest));
   } catch (e: any) {
-    if (e instanceof ExamError) return res.status(404).json({ error: e.message });
+    if (e instanceof ExamError) return res.status(e.status).json({ error: e.message });
     throw e;
   }
 });
@@ -67,7 +70,7 @@ examRouter.put('/:id/review', async (req, res) => {
   try {
     res.json(await updateReviewStatus(prisma, req.params.id, req.body || {}));
   } catch (e: any) {
-    if (e instanceof ExamError) return res.status(400).json({ error: e.message });
+    if (e instanceof ExamError) return res.status(e.status).json({ error: e.message });
     throw e;
   }
 });
@@ -77,7 +80,7 @@ examRouter.post('/:id/void', async (req, res) => {
   try {
     res.json(await voidExam(prisma, req.params.id));
   } catch (e: any) {
-    if (e instanceof ExamError) return res.status(400).json({ error: e.message });
+    if (e instanceof ExamError) return res.status(e.status).json({ error: e.message });
     throw e;
   }
 });

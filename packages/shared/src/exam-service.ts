@@ -18,7 +18,16 @@ import { v4 as uuid } from 'uuid';
 import { DEPT, DEFAULT_REVIEW_DAYS, REVIEW_STATUS } from './constants.js';
 import { computeAge, reviewDaysRemaining, isPendingReview } from './db-helpers.js';
 
-export class ExamError extends Error {}
+// Carries an optional HTTP-style status code so routes can map "not found" to
+// 404 and validation/business failures to 400 without instanceof branching.
+// Electron ignores the code (IPC surfaces the message as-is). Defaults to 400.
+export class ExamError extends Error {
+  status: number;
+  constructor(message: string, status = 400) {
+    super(message);
+    this.status = status;
+  }
+}
 
 // ---------- Create ----------
 export interface CreateExamInput {
@@ -103,7 +112,7 @@ export async function getExamDetail(prisma: PrismaClient, id: string) {
     where: { id },
     include: { customer: { include: { member: true } }, payment: true },
   });
-  if (!exam) throw new ExamError('检查记录不存在');
+  if (!exam) throw new ExamError('检查记录不存在', 404);
   // history excludes voided drafts (B.6) but KEEPS discarded revisions (§2.4).
   const history = await prisma.examRecord.findMany({
     where: { customerId: exam.customerId, deletedAt: null, voidedAt: null, id: { not: exam.id } },
@@ -199,7 +208,7 @@ export async function listExams(prisma: PrismaClient, filters: ListExamsFilters)
 // draft from all lists/stats without going through the recycle bin.
 export async function voidExam(prisma: PrismaClient, id: string) {
   const exam = await prisma.examRecord.findUnique({ where: { id }, include: { payment: true } });
-  if (!exam) throw new ExamError('检查记录不存在');
+  if (!exam) throw new ExamError('检查记录不存在', 404);
   if (exam.voidedAt) throw new ExamError('该记录已作废');
   if (exam.payment) throw new ExamError('已支付的记录不能作废，如需删除请走回收站');
   const updated = await prisma.examRecord.update({
@@ -256,7 +265,7 @@ export interface UpdateExamInput {
 
 export async function updateExam(prisma: PrismaClient, id: string, input: UpdateExamInput) {
   const exam = await prisma.examRecord.findUnique({ where: { id } });
-  if (!exam) throw new ExamError('检查记录不存在');
+  if (!exam) throw new ExamError('检查记录不存在', 404);
 
   const {
     dept, templateId, templateName, content,
