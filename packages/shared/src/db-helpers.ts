@@ -1,6 +1,6 @@
 // DB-accessing helpers shared by server + client. Take a PrismaClient instance.
 import type { PrismaClient } from '../generated/client';
-import { computeBalances, sumLedger } from './logic/ledger.js';
+import { computeBalances, sumLedger, recomputeBatchesFromLedger } from './logic/ledger.js';
 import { dueForExpiry } from './logic/beans.js';
 import { computeTier } from './logic/tier.js';
 import { LEDGER_FIELD, LEDGER_SOURCE, formatDateTime } from './constants.js';
@@ -30,7 +30,14 @@ export async function loadBalances(prisma: PrismaClient, memberId: string, now: 
 // no batch has an expiresAt and dueForExpiry returns empty.
 export async function expireDueBeanBatches(prisma: PrismaClient, now: Date = new Date(), origin: 'SERVER' | 'CLIENT' = 'SERVER'): Promise<number> {
   const batches = await prisma.beanBatch.findMany({ where: { expired: false } });
-  const due = dueForExpiry(batches as any, now);
+  if (batches.length === 0) return 0;
+  // Rebuild remaining from the append-only Ledger BEFORE checking expiry, so a
+  // batch whose stored remaining was inflated by LWW sync merge doesn't get
+  // over-written-down at expiry (would make 累计豆 lower than reality). The
+  // Ledger is authoritative; using the stored counter here was the leftover gap.
+  const allBeanLedgers = await prisma.ledger.findMany({ where: { field: LEDGER_FIELD.BEANS } });
+  const reconciled = recomputeBatchesFromLedger(batches as any, allBeanLedgers as any);
+  const due = dueForExpiry(reconciled, now);
   if (due.length === 0) return 0;
 
   let expiredCount = 0;

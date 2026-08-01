@@ -214,7 +214,7 @@ export function registerHandlers(getWin: () => BrowserWindow | null) {
 
   // ---- exams ----
   ipcMain.handle('clinic:createExam', async (_e, input: any) => {
-    const { customerId, name, phone, address, birthday, dept, templateId, templateName, content, lensBrand, lensPrice, frameBrand, framePrice, totalAmount, reviewDate, reviewerId, reviewerName, reviewNote, registeredById, registeredByName } = input || {};
+    const { customerId, name, phone, address, birthday, dept, templateId, templateName, content, lensBrand, lensPrice, frameBrand, framePrice, totalAmount, reviewDate, reviewerId, reviewerName, reviewNote, registeredById, registeredByName, registeredAt } = input || {};
     if (!name || !phone || !dept || !registeredById) throw new Error('姓名、手机号、部门、登记人必填');
     if (dept === DEPT.OPTICAL && (lensPrice == null || framePrice == null)) throw new Error('配镜部镜片和镜架价格必填');
     if (dept === DEPT.EYE && totalAmount == null) throw new Error('眼科部总金额必填');
@@ -226,7 +226,9 @@ export function registerHandlers(getWin: () => BrowserWindow | null) {
     }
     const baseAmount = dept === DEPT.OPTICAL ? (Number(lensPrice) || 0) + (Number(framePrice) || 0) : (Number(totalAmount) || 0);
     const review = reviewDate ? new Date(reviewDate) : new Date(Date.now() + DEFAULT_REVIEW_DAYS * 86400000);
-    const exam = await p().examRecord.create({ data: { id: uuid(), customerId: customer.id, dept, templateId: templateId || null, templateName: templateName || null, content: content ? JSON.stringify(content) : null, lensBrand: lensBrand || null, lensPrice: dept === DEPT.OPTICAL ? Number(lensPrice) : null, frameBrand: frameBrand || null, framePrice: dept === DEPT.OPTICAL ? Number(framePrice) : null, totalAmount: dept === DEPT.EYE ? Number(totalAmount) : null, baseAmount, reviewDate: review, reviewerId: reviewerId || null, reviewerName: reviewerName || null, reviewStatus: 'PENDING', reviewNote: reviewNote || null, registeredBy: registeredById, registeredByName: registeredByName || '', registeredStoreId: dev.storeId, registeredStoreName: dev.storeName, registeredDeviceId: dev.deviceId } });
+    // 登记时间可自定义（默认当前时间）；允许补录历史登记。
+    const regAt = registeredAt ? new Date(registeredAt) : new Date();
+    const exam = await p().examRecord.create({ data: { id: uuid(), customerId: customer.id, dept, templateId: templateId || null, templateName: templateName || null, content: content ? JSON.stringify(content) : null, lensBrand: lensBrand || null, lensPrice: dept === DEPT.OPTICAL ? Number(lensPrice) : null, frameBrand: frameBrand || null, framePrice: dept === DEPT.OPTICAL ? Number(framePrice) : null, totalAmount: dept === DEPT.EYE ? Number(totalAmount) : null, baseAmount, reviewDate: review, reviewerId: reviewerId || null, reviewerName: reviewerName || null, reviewStatus: 'PENDING', reviewNote: reviewNote || null, registeredBy: registeredById, registeredByName: registeredByName || '', registeredStoreId: dev.storeId, registeredStoreName: dev.storeName, registeredDeviceId: dev.deviceId, registeredAt: regAt } });
     return exam;
   });
 
@@ -270,6 +272,62 @@ export function registerHandlers(getWin: () => BrowserWindow | null) {
     const { reviewStatus, reviewerId, reviewerName, reviewNote } = input || {};
     if (!reviewStatus || !['PENDING', 'CONTACTED', 'CONTACTED_NO_SHOW', 'REVIEWED'].includes(reviewStatus)) throw new Error('无效复查状态');
     return p().examRecord.update({ where: { id }, data: { reviewStatus, reviewerId, reviewerName, reviewNote } });
+  });
+
+  // 敏感操作二次确认：校验 CHANGE 密码（向服务器验证，Password 表不下发到客户端）。
+  // 离线时无法验证 -> 编辑历史检查单必须在线（与后台登录一致的前提）。
+  ipcMain.handle('clinic:verifyChange', async (_e, password: string) => {
+    const base = getServerUrl().replace(/\/+$/, '');
+    const r = await fetch(`${base}/api/auth/verify-change`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: password || '' }),
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!r.ok) {
+      const err = (await r.json().catch(() => ({}))) as { error?: string };
+      throw new Error(err.error || '无法连接服务器验证修改密码');
+    }
+    return (await r.json()) as { ok: boolean };
+  });
+
+  // 修改检查单：全字段可改（含登记时间、复查日期、模板内容、品牌价格、登记人）。
+  // 相当于重新填一次检查单，旧值已预填。payment 不动（支付是独立记录，如需改走另行处理）。
+  // updatedAt 由 Prisma @updatedAt 自动刷新 -> LWW 同步把改动推到云端。
+  ipcMain.handle('clinic:updateExam', async (_e, { id, input }: any) => {
+    const exam = await p().examRecord.findUnique({ where: { id } });
+    if (!exam) throw new Error('检查记录不存在');
+    const {
+      dept, templateId, templateName, content,
+      lensBrand, lensPrice, frameBrand, framePrice, totalAmount,
+      reviewDate, reviewerId, reviewerName, reviewNote,
+      registeredById, registeredByName, registeredAt,
+    } = input || {};
+    const d = dept || exam.dept;
+    const baseAmount = d === DEPT.OPTICAL
+      ? (Number(lensPrice ?? exam.lensPrice) || 0) + (Number(framePrice ?? exam.framePrice) || 0)
+      : (Number(totalAmount ?? exam.totalAmount) || 0);
+    const data: any = {
+      dept: d,
+      templateId: templateId !== undefined ? (templateId || null) : undefined,
+      templateName: templateName !== undefined ? (templateName || null) : undefined,
+      content: content !== undefined ? (content ? JSON.stringify(content) : null) : undefined,
+      lensBrand: lensBrand !== undefined ? (lensBrand || null) : undefined,
+      lensPrice: lensPrice !== undefined ? (d === DEPT.OPTICAL ? Number(lensPrice) : null) : undefined,
+      frameBrand: frameBrand !== undefined ? (frameBrand || null) : undefined,
+      framePrice: framePrice !== undefined ? (d === DEPT.OPTICAL ? Number(framePrice) : null) : undefined,
+      totalAmount: totalAmount !== undefined ? (d === DEPT.EYE ? Number(totalAmount) : null) : undefined,
+      baseAmount,
+      reviewDate: reviewDate !== undefined ? new Date(reviewDate) : undefined,
+      reviewerId: reviewerId !== undefined ? (reviewerId || null) : undefined,
+      reviewerName: reviewerName !== undefined ? (reviewerName || null) : undefined,
+      reviewNote: reviewNote !== undefined ? (reviewNote || null) : undefined,
+      registeredBy: registeredById !== undefined ? registeredById : undefined,
+      registeredByName: registeredByName !== undefined ? registeredByName : undefined,
+      registeredAt: registeredAt ? new Date(registeredAt) : undefined,
+    };
+    // strip undefined so Prisma only writes provided fields
+    Object.keys(data).forEach((k) => data[k] === undefined && delete data[k]);
+    return p().examRecord.update({ where: { id }, data });
   });
 
   // ---- payment + recharge (use shared services) ----

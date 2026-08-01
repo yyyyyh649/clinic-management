@@ -4,6 +4,7 @@ import { v4 as uuid } from 'uuid';
 import { prisma } from '../db.js';
 import { DEPT, DEFAULT_REVIEW_DAYS, REVIEW_STATUS } from '@clinic/shared';
 import { computeAge, reviewDaysRemaining, isPendingReview } from '@clinic/shared';
+import { verifyPassword, PASSWORD_KEY } from '../passwords.js';
 
 export const examRouter = Router();
 
@@ -89,6 +90,7 @@ examRouter.post('/', async (req, res) => {
     lensBrand, lensPrice, frameBrand, framePrice, totalAmount,
     reviewDate, reviewerId, reviewerName, reviewNote,
     registeredById, registeredByName, registeredStoreId, registeredStoreName, registeredDeviceId,
+    registeredAt, // 可自定义登记时间（默认当前时间），允许补录历史登记
   } = req.body || {};
 
   if (!name || !phone || !dept || !registeredById) return res.status(400).json({ error: '姓名、手机号、部门、登记人必填' });
@@ -109,6 +111,7 @@ examRouter.post('/', async (req, res) => {
 
   const baseAmount = dept === DEPT.OPTICAL ? (Number(lensPrice) || 0) + (Number(framePrice) || 0) : (Number(totalAmount) || 0);
   const review = reviewDate ? new Date(reviewDate) : new Date(Date.now() + DEFAULT_REVIEW_DAYS * 86400000);
+  const regAt = registeredAt ? new Date(registeredAt) : new Date();
 
   const exam = await prisma.examRecord.create({
     data: {
@@ -121,9 +124,56 @@ examRouter.post('/', async (req, res) => {
       reviewDate: review, reviewerId: reviewerId || null, reviewerName: reviewerName || null, reviewStatus: 'PENDING', reviewNote: reviewNote || null,
       registeredBy: registeredById, registeredByName: registeredByName || '',
       registeredStoreId, registeredStoreName: registeredStoreName || '', registeredDeviceId: registeredDeviceId || '',
+      registeredAt: regAt,
     },
   });
   res.json(exam);
+});
+
+// ---------- Edit exam (全字段可改，需 CHANGE 修改密码) ----------
+// 相当于重新填一次检查单：登记时间、复查日期、模板内容、品牌价格、登记人均可改。
+// payment 是独立记录，此处不动（如需改支付另行处理）。需先校验敏感信息修改密码。
+examRouter.put('/:id', async (req, res) => {
+  const exam = await prisma.examRecord.findUnique({ where: { id: req.params.id } });
+  if (!exam) return res.status(404).json({ error: '检查记录不存在' });
+
+  const { changePassword: cp } = req.body || {};
+  const ok = await verifyPassword(prisma, PASSWORD_KEY.CHANGE, cp || '');
+  if (!ok) return res.status(403).json({ error: '修改检查单需要敏感信息修改密码验证通过' });
+
+  const {
+    dept, templateId, templateName, content,
+    lensBrand, lensPrice, frameBrand, framePrice, totalAmount,
+    reviewDate, reviewerId, reviewerName, reviewNote,
+    registeredById, registeredByName, registeredAt,
+  } = req.body || {};
+
+  const d = dept || exam.dept;
+  const baseAmount = d === DEPT.OPTICAL
+    ? (Number(lensPrice ?? exam.lensPrice) || 0) + (Number(framePrice ?? exam.framePrice) || 0)
+    : (Number(totalAmount ?? exam.totalAmount) || 0);
+
+  const data: any = {};
+  if (dept !== undefined) data.dept = d;
+  if (templateId !== undefined) data.templateId = templateId || null;
+  if (templateName !== undefined) data.templateName = templateName || null;
+  if (content !== undefined) data.content = content ? JSON.stringify(content) : null;
+  if (lensBrand !== undefined) data.lensBrand = lensBrand || null;
+  if (lensPrice !== undefined) data.lensPrice = d === DEPT.OPTICAL ? Number(lensPrice) : null;
+  if (frameBrand !== undefined) data.frameBrand = frameBrand || null;
+  if (framePrice !== undefined) data.framePrice = d === DEPT.OPTICAL ? Number(framePrice) : null;
+  if (totalAmount !== undefined) data.totalAmount = d === DEPT.EYE ? Number(totalAmount) : null;
+  data.baseAmount = baseAmount;
+  if (reviewDate !== undefined) data.reviewDate = new Date(reviewDate);
+  if (reviewerId !== undefined) data.reviewerId = reviewerId || null;
+  if (reviewerName !== undefined) data.reviewerName = reviewerName || null;
+  if (reviewNote !== undefined) data.reviewNote = reviewNote || null;
+  if (registeredById !== undefined) data.registeredBy = registeredById;
+  if (registeredByName !== undefined) data.registeredByName = registeredByName;
+  if (registeredAt) data.registeredAt = new Date(registeredAt);
+
+  const updated = await prisma.examRecord.update({ where: { id: exam.id }, data });
+  res.json(updated);
 });
 
 // ---------- Review status update ----------

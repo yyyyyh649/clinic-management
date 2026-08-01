@@ -37,10 +37,23 @@ export const DATE_FIELDS: Record<string, string[]> = {
   Setting: ['updatedAt'],
 };
 
+// Primary key field per table. Most models use `id`, but Setting (and any other
+// config table keyed by a natural key) uses `key`. The generic sync layer must
+// look up / dedup by the correct PK — hardcoding `id` made Setting sync silently
+// fail (findUnique({ where: { id } }) throws on a model with no `id` field),
+// so admin-side setting changes never reached clients.
+export const PK_FIELDS: Record<string, string> = {
+  Setting: 'key',
+};
+export function pkField(table: SyncTableName): string {
+  return PK_FIELDS[table] || 'id';
+}
+
 export function makeSyncRecord(table: SyncTableName, row: Record<string, unknown>): SyncRecord {
+  const pk = pkField(table);
   return {
     table,
-    id: String(row.id),
+    id: String(row[pk]),
     data: row,
     updatedAt: row.updatedAt ? String(row.updatedAt) : (row.createdAt ? String(row.createdAt) : new Date().toISOString()),
     deletedAt: row.deletedAt ? String(row.deletedAt) : null,

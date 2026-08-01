@@ -121,6 +121,7 @@ export default function App() {
             <Route path="/member/:id" element={<MemberDetail />} />
             <Route path="/exam" element={<ExamQuery />} />
             <Route path="/exam/:id" element={<ExamDetail />} />
+            <Route path="/exam/:id/edit" element={<ExamRegister />} />
             <Route path="/admin" element={<Admin />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>

@@ -60,8 +60,13 @@ syncRouter.post('/push', async (req, res) => {
     const found = await recomputeAnomalies(result.affectedMemberIds);
     anomalies = found.map((a) => ({ memberId: a.memberId, field: a.field, value: a.value }));
   }
-  // update device lastSyncAt
-  await prisma.device.update({ where: { id: deviceId }, data: { lastSyncAt: new Date() } }).catch(() => {});
+  // update device lastSyncAt via RAW SQL — a Prisma client update would auto-bump
+  // Device.updatedAt (@updatedAt), which then syncs back to the client and makes
+  // the Device record count as "pending" on every single sync cycle forever
+  // (server bumps updatedAt -> client pulls -> countPending sees it as newer ->
+  // pushes back -> server bumps again...). Raw SQL touches only lastSyncAt, so
+  // updatedAt stays unchanged and the sync loop stays closed.
+  await prisma.$executeRawUnsafe('UPDATE "Device" SET "lastSyncAt" = ? WHERE "id" = ?', new Date().toISOString(), deviceId).catch(() => {});
   return res.json({ accepted: result.applied, rejected: result.skipped, anomalies });
 });
 

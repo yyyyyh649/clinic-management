@@ -76,6 +76,12 @@ export const api = {
   // B.6: void an unpaid exam draft.
   voidExam: (id: string) =>
     electronApi ? electronApi.voidExam(id) : http('POST', `/api/exams/${id}/void`),
+  // 修改检查单（需先通过 verifyChange 校验修改密码）。全字段可改，旧值预填。
+  updateExam: (id: string, input: any) =>
+    electronApi ? electronApi.updateExam({ id, input }) : http('PUT', `/api/exams/${id}`, input),
+  // 敏感操作二次确认：校验 CHANGE 修改密码（向服务器验证）。
+  verifyChange: (password: string) =>
+    electronApi ? electronApi.verifyChange(password) : http<{ ok: boolean }>('POST', '/api/auth/verify-change', { password }),
 
   // payments + recharge
   createPayment: (input: any) => (electronApi ? electronApi.createPayment(input) : http('POST', '/api/payments', input)),

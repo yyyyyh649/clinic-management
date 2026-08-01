@@ -15,6 +15,27 @@ export default function ExamDetail() {
   const [reviewerId, setReviewerId] = useState('');
   const [note, setNote] = useState('');
   const [voiding, setVoiding] = useState(false);
+  const [editPwd, setEditPwd] = useState('');
+  const [editModal, setEditModal] = useState(false);
+  const [editBusy, setEditBusy] = useState(false);
+  const [err2, setErr2] = useState('');
+
+  // 修改检查单需先校验敏感信息修改密码（向服务器验证），通过后进入编辑表单。
+  async function startEdit() {
+    if (!id) return;
+    setErr2('');
+    if (!editPwd) { setErr2('请输入修改密码'); return; }
+    setEditBusy(true);
+    try {
+      const r = await api.verifyChange(editPwd);
+      if (r.ok) { setEditModal(false); setEditPwd(''); nav(`/exam/${id}/edit`); }
+      else setErr2('修改密码错误');
+    } catch (e: any) {
+      setErr2(e.message || '验证失败，请检查网络或密码');
+    } finally {
+      setEditBusy(false);
+    }
+  }
 
   async function load() {
     if (!id) return;
@@ -54,7 +75,7 @@ export default function ExamDetail() {
 
   return (
     <div className="space-y-4">
-      <Card title={`检查详情 · ${exam.dept === 'OPTICAL' ? '配镜部' : '眼科部'}`} extra={<Button variant="ghost" onClick={() => nav('/exam')}>返回列表</Button>}>
+      <Card title={`检查详情 · ${exam.dept === 'OPTICAL' ? '配镜部' : '眼科部'}`} extra={<div className="flex gap-2"><Button variant="ghost" onClick={() => setEditModal(true)}>修改检查单</Button><Button variant="ghost" onClick={() => nav('/exam')}>返回列表</Button></div>}>
         <div className="grid grid-cols-3 gap-4">
           <div className="space-y-1.5 text-sm">
             <Row label="姓名" value={customer?.name} />
@@ -190,6 +211,30 @@ export default function ExamDetail() {
             </tbody>
           </table>}
       </Card>
+
+      {/* 修改检查单密码确认弹窗 */}
+      {editModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="w-80 rounded-lg bg-white p-5 shadow-xl">
+            <div className="mb-2 text-sm font-semibold text-ink-900">修改检查单 · 密码确认</div>
+            <p className="mb-3 text-xs text-ink-500">修改历史检查单属于敏感操作，请输入敏感信息修改密码。需在线验证。</p>
+            <input
+              type="password"
+              className="input"
+              placeholder="敏感信息修改密码"
+              value={editPwd}
+              autoFocus
+              onChange={(e) => { setEditPwd(e.target.value); setErr2(''); }}
+              onKeyDown={(e) => { if (e.key === 'Enter') startEdit(); }}
+            />
+            {err2 && <div className="mt-2 text-xs text-rose-600">{err2}</div>}
+            <div className="mt-4 flex justify-end gap-2">
+              <Button variant="ghost" disabled={editBusy} onClick={() => { setEditModal(false); setEditPwd(''); setErr2(''); }}>取消</Button>
+              <Button disabled={editBusy} onClick={startEdit}>{editBusy ? '验证中…' : '确认修改'}</Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

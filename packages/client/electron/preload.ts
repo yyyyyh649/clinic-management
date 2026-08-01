@@ -7,7 +7,7 @@ const calls = [
   'getSyncStatus', 'syncNow', 'adminLogin',
   'dedupCustomer', 'searchMembers',
   'registerMember', 'getMember', 'listMembers', 'adjustLedger', 'updateMember',
-  'createExam', 'getExam', 'listExams', 'updateReview', 'voidExam',
+  'createExam', 'getExam', 'listExams', 'updateReview', 'voidExam', 'updateExam', 'verifyChange',
   'createPayment', 'createRecharge',
   'getStaff', 'getTiers', 'getTemplates', 'getBrands', 'getStores', 'getSettings',
 ] as const;

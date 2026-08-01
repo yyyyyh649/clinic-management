@@ -1,7 +1,7 @@
 // Generic sync record applier — used by BOTH server (push handler) and client (pull applier).
 // Applies a batch of SyncRecord envelopes to a PrismaClient using append-only or LWW semantics.
 import type { PrismaClient } from '../generated/client';
-import { APPEND_ONLY, DATE_FIELDS } from './sync.js';
+import { APPEND_ONLY, DATE_FIELDS, pkField } from './sync.js';
 import type { SyncRecord, SyncTableName } from './types.js';
 
 // Map PascalCase table name -> prisma model delegate key (lowercase first letter).
@@ -48,22 +48,25 @@ export async function applySyncRecords(
     if (!delegate) { skipped++; continue; }
     const data = prepareData(rec.table, rec.data);
     const id = rec.id;
+    // Look up / dedup by the table's actual primary key (Setting uses `key`,
+    // everything else uses `id`). Hardcoding `id` broke Setting sync silently.
+    const pk = pkField(rec.table);
 
     try {
       if (isAppendOnly(rec.table)) {
         // create if missing, ignore if exists (never update).
-        const existing = await delegate.findUnique({ where: { id } }).catch(() => null);
+        const existing = await delegate.findUnique({ where: { [pk]: id } }).catch(() => null);
         if (existing) { skipped++; continue; }
         await delegate.create({ data });
         applied++;
       } else {
         // LWW: only overwrite if incoming newer-or-equal.
-        const existing = await delegate.findUnique({ where: { id } }).catch(() => null);
+        const existing = await delegate.findUnique({ where: { [pk]: id } }).catch(() => null);
         const incomingUpdated = rec.updatedAt ? new Date(rec.updatedAt) : new Date();
         if (existing) {
           const existingUpdated = existing.updatedAt ? new Date(existing.updatedAt) : new Date(0);
           if (incomingUpdated < existingUpdated) { skipped++; continue; }
-          await delegate.update({ where: { id }, data });
+          await delegate.update({ where: { [pk]: id }, data });
         } else {
           await delegate.create({ data });
         }
