@@ -84,6 +84,10 @@ if [[ "${CLINIC_NPM_MIRROR:-auto}" == "1" ]]; then
 fi
 npm install
 npm run shared:generate   # prisma generate — downloads the arm64 query engine on A1
+# shared:build 是必需步骤：server 运行时通过 node_modules/@clinic/shared 软链
+# 解析到 packages/shared/dist/src/index.js（package.json main）。只 generate
+# 不 build 会导致 dist 不存在，server 启动报 ERR_MODULE_NOT_FOUND 崩溃。
+npm run shared:build
 ok "依赖安装完成"
 
 # ---- 3. .env (first run only) ----------------------------------------------

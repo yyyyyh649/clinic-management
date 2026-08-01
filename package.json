@@ -8,12 +8,13 @@
   ],
   "scripts": {
     "shared:generate": "npm -w @clinic/shared run db:generate",
+    "shared:build": "npm -w @clinic/shared run build",
     "shared:seed": "npm -w @clinic/shared run seed",
     "server:dev": "npm -w @clinic/server run dev",
     "server:build": "npm -w @clinic/server run build",
     "client:dev": "npm -w @clinic/client run dev",
     "client:build": "npm -w @clinic/client run build",
-    "install:all": "npm install && npm run shared:generate",
+    "install:all": "npm install && npm run shared:generate && npm run shared:build",
     "dev": "concurrently -n shared,server,client -c yellow,cyan,magenta \"npm:shared:generate\" \"npm:server:dev\" \"npm:client:dev\""
   },
   "devDependencies": {

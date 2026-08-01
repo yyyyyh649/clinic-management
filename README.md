@@ -62,6 +62,7 @@ git clone <repo-url> clinic-management
 cd clinic-management
 npm install                 # 安装所有 workspace 依赖
 npm run shared:generate     # 生成 Prisma Client（必须执行一次）
+npm run shared:build        # 编译 shared TS → dist（server/client 通过 @clinic/shared 软链加载 dist，不 build 会启动崩溃）
 ```
 
 ### 2. 初始化云端数据库
@@ -84,7 +85,7 @@ npm run server:dev          # http://localhost:4000
 
 ```bash
 npm -w @clinic/server run build   # 编译 TS + 构建后台 SPA
-npm -w @clinic/server run start    # node dist/index.js
+npm -w @clinic/server run start    # node dist/server/src/index.js
 ```
 
 后台管理界面：浏览器打开 `http://<服务器IP>:4000/`，输入后台密码登录（密码在首次启动时由 `.env` 的初始密码写入数据库，之后在后台界面修改）。
@@ -137,6 +138,7 @@ npm -w @clinic/client run dev
 
 ```bash
 npm install && npm run shared:generate   # 装依赖 + 生成对应平台的 Prisma 引擎
+npm run shared:build                      # 编译 shared TS → dist（打 exe 前必须，client 会拷贝 shared/dist 进安装包）
 npm -w @clinic/client run dist           # 编译 + electron-builder 打 NSIS 安装包
 ```
 
@@ -289,6 +291,7 @@ Electron 客户端默认连 `http://localhost:4000`。三种方式覆盖：
 | 命令 | 说明 |
 |------|------|
 | `npm install && npm run shared:generate` | 首次安装 + 生成 Prisma Client |
+| `npm run shared:build` | 编译 shared TS → dist（server/client 运行时依赖，必须）|
 | `npm -w @clinic/server run db:push` | 初始化/同步 server.db 表结构 |
 | `npm run server:dev` | 启动云端服务器（开发，热重载）|
 | `npm -w @clinic/server run build` | 编译服务器 + 后台 SPA |
