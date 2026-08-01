@@ -9,7 +9,7 @@ import { syncOnce, getSyncStatus, onSyncStatus } from './sync.js';
 import {
   PrismaClient, executePayment, executeRecharge, PaymentError, loadMemberDetail, loadBalances,
   createExam as createExamSvc, getExamDetail, listExams, voidExam,
-  updateReviewStatus, updateExam as updateExamSvc, ExamError,
+  updateReviewStatus, updateExam as updateExamSvc,
   type DeviceIdentity,
   computeTier, computeAge, memberDaysSince, computeBatchExpiry,
   type BeanExpirySetting,
