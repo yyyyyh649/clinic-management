@@ -48,21 +48,17 @@ function SyncIndicator() {
 
 function RemindersDots() {
   const r = useReminders();
-  if (r.birthdayToday === 0 && r.reviewDue === 0) return null;
+  // 永久显示，没人满足时显示 0，点击进入对应列表（空列表）
   return (
     <div className="flex items-center gap-2 text-xs">
-      {r.birthdayToday > 0 && (
-        <NavLink to="/member?filter=birthday" className="flex items-center gap-1 rounded-full bg-amber-50 px-2 py-1 text-amber-700 hover:bg-amber-100">
-          <span>🎂 今日生日</span>
-          <span className="rounded-full bg-rose-500 px-1.5 text-white">{r.birthdayToday}</span>
-        </NavLink>
-      )}
-      {r.reviewDue > 0 && (
-        <NavLink to="/exam?filter=due" className="flex items-center gap-1 rounded-full bg-rose-50 px-2 py-1 text-rose-700 hover:bg-rose-100">
-          <span>⏰ 待复查</span>
-          <span className="rounded-full bg-rose-500 px-1.5 text-white">{r.reviewDue}</span>
-        </NavLink>
-      )}
+      <NavLink to="/member?filter=birthday" className="flex items-center gap-1 rounded-full bg-amber-50 px-2 py-1 text-amber-700 hover:bg-amber-100">
+        <span>🎂 今日生日</span>
+        <span className="rounded-full bg-rose-500 px-1.5 text-white">{r.birthdayToday}</span>
+      </NavLink>
+      <NavLink to="/exam?filter=due" className="flex items-center gap-1 rounded-full bg-rose-50 px-2 py-1 text-rose-700 hover:bg-rose-100">
+        <span>⏰ 待复查</span>
+        <span className="rounded-full bg-rose-500 px-1.5 text-white">{r.reviewDue}</span>
+      </NavLink>
     </div>
   );
 }

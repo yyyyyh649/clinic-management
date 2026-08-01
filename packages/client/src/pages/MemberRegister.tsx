@@ -1,5 +1,5 @@
 // 会员登记 (§3.1): customer dedup + member fields + init balance/beans.
-// C.1: phone uses PhoneInput (realtime validation). C.2: birthday defaults to today.
+// C.1: phone uses PhoneInput (realtime validation). C.2: birthday defaults to yesterday (不能选今天及以后).
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../api';
@@ -7,13 +7,14 @@ import { Button, Card, Field, Input, Modal, Badge, fmtCents } from '../component
 import { PhoneInput, isPhoneValid } from '../components/PhoneInput';
 
 const todayStr = () => new Date().toISOString().slice(0, 10);
+const yesterdayStr = () => { const d = new Date(); d.setDate(d.getDate() - 1); return d.toISOString().slice(0, 10); };
 
 export default function MemberRegister() {
   const nav = useNavigate();
   const [staff, setStaff] = useState<any[]>([]);
   const [tiers, setTiers] = useState<any[]>([]);
   const [form, setForm] = useState({
-    name: '', phone: '', cardNo: '', birthday: todayStr(), address: '',
+    name: '', phone: '', cardNo: '', birthday: yesterdayStr(), address: '',
     registeredById: '', initialBalance: '', initialBeans: '',
   });
   const [err, setErr] = useState('');
@@ -103,7 +104,7 @@ export default function MemberRegister() {
           </div>
           <div className="mt-4 flex gap-2">
             <Button onClick={() => nav(`/member/${result.member.id}`)}>查看会员详情</Button>
-            <Button variant="ghost" onClick={() => { setResult(null); setForm({ name: '', phone: '', cardNo: '', birthday: todayStr(), address: '', registeredById: '', initialBalance: '', initialBeans: '' }); setReuseCustomerId(null); setReuseHint(''); }}>继续登记下一个</Button>
+            <Button variant="ghost" onClick={() => { setResult(null); setForm({ name: '', phone: '', cardNo: '', birthday: yesterdayStr(), address: '', registeredById: '', initialBalance: '', initialBeans: '' }); setReuseCustomerId(null); setReuseHint(''); }}>继续登记下一个</Button>
           </div>
         </Card>
       </div>
@@ -127,8 +128,8 @@ export default function MemberRegister() {
           <Field label="会员卡号" required>
             <Input value={form.cardNo} onChange={(e) => set('cardNo', e.target.value)} />
           </Field>
-          <Field label="生日" required>
-            <Input type="date" value={form.birthday} onChange={(e) => set('birthday', e.target.value)} />
+          <Field label="生日" required hint="不能选今天及以后">
+            <Input type="date" max={todayStr()} value={form.birthday} onChange={(e) => set('birthday', e.target.value)} />
           </Field>
           <Field label="住址（可选）">
             <Input value={form.address} onChange={(e) => set('address', e.target.value)} />

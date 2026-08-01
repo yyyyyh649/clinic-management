@@ -94,7 +94,12 @@ export function registerHandlers(getWin: () => BrowserWindow | null) {
       ? { OR: [{ cardNo: { contains: q } }, { cardNo: { endsWith: q } }] }
       : { OR: [{ customer: { name: { contains: q } } }, { customer: { phone: { contains: q } } }, { cardNo: { contains: q } }] };
     const items = await p().member.findMany({ where, include: { customer: true }, take: 30 });
-    return { items };
+    // Attach balances so the payment page can show balance/points without an extra round-trip.
+    const enriched = await Promise.all(items.map(async (m: any) => {
+      const balances = await loadBalances(p(), m.id).catch(() => ({ balanceCents: 0, beans: 0, points: 0 }));
+      return { ...m, balances };
+    }));
+    return { items: enriched };
   });
 
   // ---- member register / detail / list / adjust ----
@@ -156,12 +161,18 @@ export function registerHandlers(getWin: () => BrowserWindow | null) {
   });
 
   ipcMain.handle('clinic:adjustLedger', async (_e, { memberId, input }: any) => {
-    const { field, delta, reason, operatorId, operatorName } = input || {};
+    const { field, delta, reason, operatorId, operatorName, cashReceivedYuan } = input || {};
     if (!field || delta === undefined) throw new Error('字段和增减量必填');
     if (!reason || !reason.trim()) throw new Error('必须填写备注原因');
     const setting = await beanSetting();
     const dev = stamp(input);
     const id = uuid();
+    // When adjusting BALANCE with a positive delta (充值), the user may also
+    // enter the actual cash received. That creates a Recharge record so the
+    // revenue report's cash pool reflects real cash-in (otherwise the cash
+    // pool would always be 0 for manual balance edits).
+    const cashReceivedCents = (field === LEDGER_FIELD.BALANCE && Number(delta) > 0 && cashReceivedYuan)
+      ? Math.round(parseFloat(cashReceivedYuan) * 100) : 0;
     await p().$transaction(async (tx) => {
       if (field === LEDGER_FIELD.BEANS && Number(delta) > 0) {
         const batchId = uuid();
@@ -174,6 +185,13 @@ export function registerHandlers(getWin: () => BrowserWindow | null) {
         for (const pl of plan) { const take = Math.min(left, pl.consume); await tx.beanBatch.update({ where: { id: pl.batchId }, data: { remaining: { decrement: take } } }); left -= take; }
       }
       await tx.ledger.create({ data: { id, memberId, field, delta: Number(delta), source: LEDGER_SOURCE.ADJUST, reason, refType: 'ADJUST', operatorId: operatorId || '前台', operatorName: operatorName || '前台', storeId: dev.storeId, storeName: dev.storeName, deviceId: dev.deviceId, syncStatus: 'PENDING', origin: 'CLIENT' } });
+      // If this is a recharge (positive balance + cash received), create a Recharge row.
+      if (cashReceivedCents > 0) {
+        const m = await tx.member.findUnique({ where: { id: memberId } });
+        if (m) {
+          await tx.recharge.create({ data: { id: uuid(), memberId, cardNo: m.cardNo, cashPaid: cashReceivedCents, balanceAdded: Number(delta), beansGifted: 0, pointsGifted: 0, note: reason, operatorId: operatorId || '前台', operatorName: operatorName || '前台', storeId: dev.storeId, storeName: dev.storeName, deviceId: dev.deviceId } });
+        }
+      }
     });
     return { ok: true };
   });

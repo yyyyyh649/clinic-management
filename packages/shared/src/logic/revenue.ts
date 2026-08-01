@@ -14,6 +14,13 @@ export interface PaymentForRevenue {
   beansDeductAmount: number; // cents (== beansDeduct count)
   createdAt: Date | string;
 }
+// Manual balance adjustments via Ledger (source=ADJUST, field=BALANCE).
+// Positive delta with no Recharge row (e.g. 直接赠送) still increases the
+// stored pool — otherwise the stored pool would undercount manual edits.
+export interface BalanceAdjustForRevenue {
+  delta: number;       // cents (signed)
+  createdAt: Date | string;
+}
 
 function ym(d: Date | string): string {
   const date = typeof d === 'string' ? new Date(d) : d;
@@ -44,6 +51,7 @@ export function computeRevenue(
   payments: PaymentForRevenue[],
   year: number,
   month: number,
+  balanceAdjusts: BalanceAdjustForRevenue[] = [],
 ): MonthRevenue {
   const range = monthRange(recharges, payments, year, month);
   let carryCash = 0;
@@ -54,9 +62,11 @@ export function computeRevenue(
     const [yy, mm] = key.split('-').map(Number);
     const newCash = recharges.filter((r) => ym(r.createdAt) === key).reduce((s, r) => s + r.cashPaid, 0);
     const newStored = recharges.filter((r) => ym(r.createdAt) === key).reduce((s, r) => s + r.balanceAdded, 0);
+    // Manual balance adjustments (Ledger ADJUST): positive delta adds to stored pool.
+    const adjustStored = balanceAdjusts.filter((a) => ym(a.createdAt) === key).reduce((s, a) => s + a.delta, 0);
 
     const poolCashBase = carryCash + newCash;
-    const poolStoredBase = carryStored + newStored;
+    const poolStoredBase = carryStored + newStored + Math.max(0, adjustStored);
 
     const monthPayments = payments.filter((p) => ym(p.createdAt) === key);
     const opticalStoredConsume = monthPayments.filter((p) => p.dept === 'OPTICAL').reduce((s, p) => s + p.balanceDeduct + p.beansDeductAmount, 0);
@@ -125,10 +135,11 @@ export function computeRevenueSeries(
   recharges: RechargeForRevenue[],
   payments: PaymentForRevenue[],
   year: number,
+  balanceAdjusts: BalanceAdjustForRevenue[] = [],
 ): MonthRevenue[] {
   const out: MonthRevenue[] = [];
   for (let month = 1; month <= 12; month++) {
-    out.push(computeRevenue(recharges, payments, year, month));
+    out.push(computeRevenue(recharges, payments, year, month, balanceAdjusts));
   }
   return out;
 }

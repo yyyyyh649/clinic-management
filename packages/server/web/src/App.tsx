@@ -8,6 +8,7 @@ import Members from './pages/Members';
 import MemberDetail from './pages/MemberDetail';
 import Exams from './pages/Exams';
 import Revenue from './pages/Revenue';
+import Funds from './pages/Funds';
 import Performance from './pages/Performance';
 import Config from './pages/Config';
 import Anomaly from './pages/Anomaly';
@@ -21,6 +22,7 @@ const NAV = [
   { to: '/members', label: '会员查询' },
   { to: '/exams', label: '检查查询' },
   { to: '/revenue', label: '营业额统计' },
+  { to: '/funds', label: '资金池管理' },
   { to: '/performance', label: '店员绩效' },
   { to: '/anomalies', label: '异常待复核' },
   { to: '/config', label: '配置管理' },
@@ -67,16 +69,14 @@ export default function App() {
         <div className="text-base font-semibold text-ink-900">眼科客户管理</div>
         <div className="text-xs text-ink-500">连锁后台</div>
       </div>
-      <nav className="flex-1 overflow-auto py-2">
+      <nav className="flex-1 space-y-1 overflow-auto p-2">
         {NAV.map((n) => (
           <NavLink
             key={n.to}
             to={n.to}
             end={n.end}
             className={({ isActive }) =>
-              `block border-l-2 px-4 py-2.5 text-sm transition ${
-                isActive ? 'border-brand-500 bg-brand-50 font-medium text-brand-700' : 'border-transparent text-ink-700 hover:bg-slate-50'
-              }`
+              `nav-item w-full justify-start ${isActive ? 'nav-item-active' : 'nav-item-default'}`
             }
           >
             {n.label}
@@ -85,7 +85,7 @@ export default function App() {
       </nav>
       <div className="border-t border-slate-100 p-3">
         <button
-          className="w-full rounded-md bg-slate-100 px-3 py-2 text-xs text-ink-700 hover:bg-slate-200"
+          className="nav-item nav-item-default w-full justify-center"
           onClick={async () => { await api.logout().catch(() => {}); setToken(null); setAuthed(false); nav('/'); }}
         >
           退出登录
@@ -123,6 +123,7 @@ export default function App() {
             <Route path="/members/:id" element={<MemberDetail />} />
             <Route path="/exams" element={<Exams />} />
             <Route path="/revenue" element={<Revenue />} />
+            <Route path="/funds" element={<Funds />} />
             <Route path="/performance" element={<Performance />} />
             <Route path="/anomalies" element={<Anomaly />} />
             <Route path="/config" element={<Config />} />

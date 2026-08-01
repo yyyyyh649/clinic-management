@@ -152,8 +152,8 @@ export default function ExamRegister() {
                   onValidChange={(p) => checkPhone(p)}
                 />
               </Field>
-              <Field label="生日（可选）" hint="用于自动计算年龄">
-                <Input type="date" value={form.birthday} onChange={(e) => setForm((f) => ({ ...f, birthday: e.target.value }))} />
+              <Field label="生日（可选）" hint="用于自动计算年龄，不能选今天及以后">
+                <Input type="date" max={todayStr()} value={form.birthday} onChange={(e) => setForm((f) => ({ ...f, birthday: e.target.value }))} />
               </Field>
               <Field label="住址（可选）">
                 <Input value={form.address} onChange={(e) => setForm((f) => ({ ...f, address: e.target.value }))} />

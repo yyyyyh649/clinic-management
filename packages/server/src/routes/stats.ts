@@ -5,7 +5,7 @@ import {
   computeRevenue, computeRevenueSeries, aggregatePerformance, commissionForMerged,
   formatCents, formatDate, formatDateTime, RECYCLE_RETENTION_DAYS,
 } from '@clinic/shared';
-import type { RechargeForRevenue, PaymentForRevenue } from '@clinic/shared';
+import type { RechargeForRevenue, PaymentForRevenue, BalanceAdjustForRevenue } from '@clinic/shared';
 
 export const statsRouter = Router();
 
@@ -27,9 +27,72 @@ statsRouter.get('/revenue', async (req, res) => {
     dept: p.exam.dept as 'OPTICAL' | 'EYE', cashPaid: p.cashPaid, balanceDeduct: p.balanceDeduct, beansDeductAmount: p.beansDeductAmount, createdAt: p.createdAt,
   }));
 
-  const monthRow = computeRevenue(rechargeForRev, paymentForRev, year, month);
-  const series = computeRevenueSeries(rechargeForRev, paymentForRev, year);
+  // Manual balance adjustments via Ledger (source=ADJUST, field=BALANCE, positive delta only).
+  // These increase the stored pool even when no Recharge row exists (e.g. 直接赠送).
+  const ledgerWhere: any = { field: 'BALANCE', source: 'ADJUST', delta: { gt: 0 } };
+  if (storeId) ledgerWhere.storeId = storeId;
+  const balanceLedgers = await prisma.ledger.findMany({ where: ledgerWhere });
+  const balanceAdjusts: BalanceAdjustForRevenue[] = balanceLedgers.map((l) => ({ delta: l.delta, createdAt: l.createdAt }));
+
+  const monthRow = computeRevenue(rechargeForRev, paymentForRev, year, month, balanceAdjusts);
+  const series = computeRevenueSeries(rechargeForRev, paymentForRev, year, balanceAdjusts);
   res.json({ month: monthRow, series });
+});
+
+// ---------- Funds pool (现金池/储值池) management: monthly breakdown + per-record detail ----------
+statsRouter.get('/funds', async (req, res) => {
+  const year = Number(req.query.year) || new Date().getFullYear();
+  const storeId = req.query.storeId as string | undefined;
+
+  const rechargeWhere: any = {};
+  if (storeId) rechargeWhere.storeId = storeId;
+  const recharges = await prisma.recharge.findMany({ where: rechargeWhere, orderBy: { createdAt: 'desc' } });
+
+  const ledgerWhere: any = { field: 'BALANCE', source: 'ADJUST', delta: { gt: 0 } };
+  if (storeId) ledgerWhere.storeId = storeId;
+  const balanceAdjusts = await prisma.ledger.findMany({ where: ledgerWhere, orderBy: { createdAt: 'desc' } });
+
+  // Build per-month summary + collect detail records.
+  const months: Record<string, { newCash: number; newStored: number; details: any[] }> = {};
+  for (let m = 1; m <= 12; m++) {
+    months[`${year}-${m}`] = { newCash: 0, newStored: 0, details: [] };
+  }
+
+  for (const r of recharges) {
+    const d = new Date(r.createdAt);
+    if (d.getFullYear() !== year) continue;
+    const key = `${year}-${d.getMonth() + 1}`;
+    months[key].newCash += r.cashPaid;
+    months[key].newStored += r.balanceAdded;
+    months[key].details.push({
+      type: 'RECHARGE', id: r.id, createdAt: r.createdAt,
+      cardNo: r.cardNo, cashPaid: r.cashPaid, balanceAdded: r.balanceAdded,
+      beansGifted: r.beansGifted, operatorName: r.operatorName, storeName: r.storeName, note: r.note,
+    });
+  }
+  for (const l of balanceAdjusts) {
+    const d = new Date(l.createdAt);
+    if (d.getFullYear() !== year) continue;
+    const key = `${year}-${d.getMonth() + 1}`;
+    months[key].newStored += l.delta;
+    months[key].details.push({
+      type: 'ADJUST', id: l.id, createdAt: l.createdAt,
+      memberId: l.memberId, delta: l.delta, reason: l.reason,
+      operatorName: l.operatorName, storeName: l.storeName,
+    });
+  }
+
+  const items = Object.entries(months).map(([k, v]) => ({
+    month: k,
+    newCash: v.newCash,
+    newStored: v.newStored,
+    total: v.newCash + v.newStored,
+    details: v.details.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()),
+  }));
+
+  const totalCash = items.reduce((s, m) => s + m.newCash, 0);
+  const totalStored = items.reduce((s, m) => s + m.newStored, 0);
+  res.json({ year, items, totalCash, totalStored, total: totalCash + totalStored });
 });
 
 // ---------- Staff performance (§6.4): optical consume, merged tiered commission, open count, brand ----------

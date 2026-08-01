@@ -13,13 +13,13 @@ export default function Config() {
         <h1 className="text-lg font-semibold text-ink-900">配置管理</h1>
         <p className="text-xs text-ink-500">所有配置项均可在界面增删改，无需重新部署代码</p>
       </div>
-      <div className="flex gap-1 border-b border-slate-200">
+      <div className="flex flex-wrap gap-2">
         {([
           ['stores', '门店'], ['devices', '设备'], ['staff', '店员'], ['tiers', '档位'],
           ['templates', '检查模板'], ['brands', '品牌'], ['settings', '豆有效期'],
         ] as [Tab, string][]).map(([k, l]) => (
           <button key={k} onClick={() => setTab(k)}
-            className={`-mb-px border-b-2 px-3 py-2 text-sm ${tab === k ? 'border-brand-500 text-brand-700' : 'border-transparent text-ink-500 hover:text-ink-700'}`}>
+            className={`nav-item ${tab === k ? 'nav-item-active' : 'nav-item-default'}`}>
             {l}
           </button>
         ))}
@@ -260,8 +260,18 @@ function TemplatesTab() {
                     </Select>
                     <Button size="sm" variant="ghost" className="col-span-2" onClick={() => { const pages = [...form.pages]; pages[pi].questions = pages[pi].questions.filter((_: any, i: number) => i !== qi); setForm((f) => ({ ...f, pages })); }}>删</Button>
                     {q.type === 'CHOICE' && (
-                      <div className="col-span-12">
-                        <Input value={(q.options || []).join(',')} onChange={(e) => { const pages = [...form.pages]; pages[pi].questions[qi] = { ...q, options: e.target.value.split(',').map((s) => s.trim()).filter(Boolean) }; setForm((f) => ({ ...f, pages })); }} placeholder="选项，逗号分隔（最后一项默认是其他）" />
+                      <div className="col-span-12 rounded-md border border-slate-100 bg-slate-50 p-2">
+                        <div className="mb-1 text-xs text-ink-500">选项列表（系统会自动追加"其他"项，无需手填）</div>
+                        <div className="space-y-1.5">
+                          {(q.options || []).map((opt: string, oi: number) => (
+                            <div key={oi} className="flex items-center gap-2">
+                              <span className="text-xs text-ink-400">{oi + 1}.</span>
+                              <Input value={opt} onChange={(e) => { const pages = [...form.pages]; const opts = [...(pages[pi].questions[qi].options || [])]; opts[oi] = e.target.value; pages[pi].questions[qi] = { ...q, options: opts }; setForm((f) => ({ ...f, pages })); }} className="flex-1" placeholder={`选项 ${oi + 1}`} />
+                              <Button size="sm" variant="ghost" onClick={() => { const pages = [...form.pages]; const opts = (pages[pi].questions[qi].options || []).filter((_: string, i: number) => i !== oi); pages[pi].questions[qi] = { ...q, options: opts }; setForm((f) => ({ ...f, pages })); }}>删</Button>
+                            </div>
+                          ))}
+                          <Button size="sm" variant="ghost" onClick={() => { const pages = [...form.pages]; const opts = [...(pages[pi].questions[qi].options || []), '']; pages[pi].questions[qi] = { ...q, options: opts }; setForm((f) => ({ ...f, pages })); }}>+ 添加选项</Button>
+                        </div>
                       </div>
                     )}
                   </div>

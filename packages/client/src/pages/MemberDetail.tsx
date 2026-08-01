@@ -16,7 +16,7 @@ export default function MemberDetail() {
   const [data, setData] = useState<any>(null);
   const [showAdj, setShowAdj] = useState(false);
   const [staff, setStaff] = useState<any[]>([]);
-  const [adj, setAdj] = useState({ field: 'BALANCE', delta: '', reason: '', operatorId: '' });
+  const [adj, setAdj] = useState({ field: 'BALANCE', delta: '', reason: '', operatorId: '', cashReceivedYuan: '' });
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
 
@@ -38,9 +38,10 @@ export default function MemberDetail() {
       await api.adjustLedger(id!, {
         field: adj.field, delta: cents, reason: adj.reason,
         operatorId: adj.operatorId, operatorName: op?.name || '',
+        cashReceivedYuan: adj.cashReceivedYuan || undefined,
       });
       setShowAdj(false);
-      setAdj({ field: 'BALANCE', delta: '', reason: '', operatorId: '' });
+      setAdj({ field: 'BALANCE', delta: '', reason: '', operatorId: '', cashReceivedYuan: '' });
       await load();
     } catch (e: any) {
       setErr(e.message || '调整失败');
@@ -186,6 +187,11 @@ export default function MemberDetail() {
           <Field label="增减量（正=加，负=减）" required hint={adj.field === 'BALANCE' ? '单位元（如 100 或 -50）' : '单位豆/分（如 200 或 -100）'}>
             <Input type="number" value={adj.delta} onChange={(e) => setAdj((a) => ({ ...a, delta: e.target.value }))} />
           </Field>
+          {adj.field === 'BALANCE' && parseFloat(adj.delta) > 0 && (
+            <Field label="充值现金（元，可选）" hint="如果是充值，填入实际收到的现金金额，会记入营业额的现金池。直接赠送或修正则不填。">
+              <Input type="number" value={adj.cashReceivedYuan} onChange={(e) => setAdj((a) => ({ ...a, cashReceivedYuan: e.target.value }))} placeholder="如 100" />
+            </Field>
+          )}
           <Field label="备注原因（必填）" required>
             <TextArea rows={2} value={adj.reason} onChange={(e) => setAdj((a) => ({ ...a, reason: e.target.value }))} placeholder="如：电话核实后修正断网期间误算的余额" />
           </Field>

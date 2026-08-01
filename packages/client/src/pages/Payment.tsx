@@ -46,13 +46,22 @@ export default function Payment() {
   const [done, setDone] = useState<any>(null);
   const [showSearch, setShowSearch] = useState(false);
 
+  // payForMember: full member object (with balances) currently selected as the card source.
+  const [payForMember, setPayForMember] = useState<any>(null);
+  // useCard: whether to use a member card for deduction. Default true if customer is a member.
+  const [useCard, setUseCard] = useState(true);
+
   useEffect(() => {
     if (!examId) return;
-    api.getExam(examId).then((r: any) => {
+    api.getExam(examId).then(async (r: any) => {
       setExam(r.exam);
-      // If the underlying customer is a member, preselect them as payFor.
+      // If the underlying customer is a member, preselect them as payFor + load balances.
       if (r.customer?.isMember && r.customer?.memberId) {
         setCfg((c) => ({ ...c, payForMemberId: r.customer.memberId }));
+        try {
+          const detail = await api.getMember(r.customer.memberId);
+          setPayForMember(detail);
+        } catch { /* ignore */ }
       }
     });
     api.getStaff().then((s: any) => setStaff(s || []));
@@ -85,6 +94,17 @@ export default function Payment() {
   const beansDeductCount = cfg.beansDeduct ? parseInt(cfg.beansDeduct, 10) || 0 : 0;
   const beansDeductAmount = beansDeductCount; // 1豆 = 1分
   const expectedCash = Math.max(0, afterDiscount - balanceDeductCents - beansDeductAmount);
+
+  // Card balance / beans (for display + overage detection).
+  const cardBalanceCents = payForMember?.balances?.balanceCents ?? 0;
+  const cardBeans = payForMember?.balances?.beans ?? 0;
+  const cardPoints = payForMember?.balances?.points ?? 0;
+  const balanceOverage = useCard && balanceDeductCents > cardBalanceCents;
+  const beansOverage = useCard && beansDeductCount > cardBeans;
+  // "全部抵扣" helpers: cap at remaining amount, never go negative.
+  const remainingAfterBeans = Math.max(0, afterDiscount - beansDeductAmount);
+  const maxBalanceDeduct = Math.min(cardBalanceCents, remainingAfterBeans) / 100; // 元
+  const maxBeansDeduct = Math.min(cardBeans, Math.floor(afterDiscount / 100) * 100); // 整百
 
   // Prefill 实付现金 with the system-calculated value (B.4) until the user edits it.
   useEffect(() => {
@@ -125,6 +145,7 @@ export default function Payment() {
   }
   function pickPayFor(m: any) {
     set('payForMemberId', m.id);
+    setPayForMember(m); // 保存完整对象（含 balances）用于显示
     setShowSearch(false);
     setSearchQ('');
     setSearchResults([]);
@@ -132,10 +153,12 @@ export default function Payment() {
 
   async function submit() {
     setErr('');
-    if (beansDeductCount > 0 && beansDeductCount % 100 !== 0) { setErr('豆抵现必须整百使用'); return; }
-    if ((balanceDeductCents > 0 || beansDeductCount > 0) && !cfg.payForMemberId) {
-      setErr('使用余额/豆抵扣需选择代付会员（本客户为会员或指定他人）'); return;
+    if (useCard && (balanceDeductCents > 0 || beansDeductCount > 0) && !cfg.payForMemberId) {
+      setErr('使用余额/豆抵扣需选择会员卡'); return;
     }
+    if (balanceOverage) { setErr(`余额超额：卡内仅剩 ${fmtCents(cardBalanceCents)} 元，无法抵扣 ${fmtCents(balanceDeductCents)} 元`); return; }
+    if (beansOverage) { setErr(`豆超额：卡内仅剩 ${cardBeans} 豆，无法抵扣 ${beansDeductCount} 豆`); return; }
+    if (beansDeductCount > 0 && beansDeductCount % 100 !== 0) { setErr('豆抵现必须整百使用'); return; }
     if (cashMismatch && !cfg.editReason.trim()) { setErr('实付金额与系统计算不一致，必须填写修改原因'); return; }
     if ((beansAwarded > 0 || pointsAwarded > 0) && !cfg.awardMemberId) { setErr('登记人不是会员或未选择归属会员，无法发放豆/积分'); return; }
 
@@ -250,43 +273,83 @@ export default function Payment() {
             </div>
           </div>
 
-          {/* Deductions + 代付 */}
+          {/* Member card selection (use / not use + which card) */}
           <div className="rounded-md border border-slate-200 p-3">
-            <div className="mb-2 text-xs font-semibold text-ink-700">余额 / 豆 抵扣</div>
-            <div className="grid grid-cols-2 gap-3">
-              <Field label="卡内余额抵扣（元）">
-                <Input type="number" value={cfg.balanceDeduct} onChange={(e) => set('balanceDeduct', e.target.value)} placeholder="如 800" />
-              </Field>
-              <Field label="豆抵扣数量（须整百，100豆=1元）">
-                <Input type="number" value={cfg.beansDeduct} onChange={(e) => set('beansDeduct', e.target.value)} placeholder="如 500" />
-              </Field>
-            </div>
-            <div className="mt-2 flex items-end justify-between">
-              <div className="text-xs text-ink-500">
-                抵扣金额合计：{fmtCents(balanceDeductCents + beansDeductAmount)} 元
-              </div>
-              <div className="text-right text-sm">
-                <span className="text-ink-500">应实付现金：</span>
-                <span className="font-semibold text-brand-700">{fmtCents(expectedCash)} 元</span>
-              </div>
+            <div className="mb-2 flex items-center justify-between">
+              <div className="text-xs font-semibold text-ink-700">会员卡抵扣</div>
+              <label className="flex items-center gap-2 text-xs">
+                <input type="checkbox" checked={useCard} onChange={(e) => setUseCard(e.target.checked)} />
+                使用会员卡
+              </label>
             </div>
 
-            {/* 代付 source member */}
-            {(balanceDeductCents > 0 || beansDeductCount > 0) && (
-              <div className="mt-3 rounded-md bg-brand-50 p-3">
-                <div className="mb-2 text-xs font-semibold text-brand-700">抵扣来源（代付会员）</div>
-                {cfg.payForMemberId ? (
-                  <div className="flex items-center justify-between text-sm">
-                    <span>已选择：{searchResults.find((m) => m.id === cfg.payForMemberId)?.customer?.name || exam.customer?.name} · 卡号 {searchResults.find((m) => m.id === cfg.payForMemberId)?.cardNo || '本客户'}</span>
-                    <Button size="sm" variant="ghost" onClick={() => setShowSearch(true)}>更换</Button>
+            {useCard && (
+              <>
+                {/* Selected card info + switch/search */}
+                <div className="mb-3 rounded-md bg-brand-50 p-3">
+                  {payForMember ? (
+                    <div className="flex items-center justify-between">
+                      <div className="text-sm">
+                        <div className="font-medium text-ink-900">{payForMember.customer?.name} · 卡号 {payForMember.member?.cardNo || payForMember.cardNo}</div>
+                        <div className="mt-1 flex gap-4 text-xs text-ink-600">
+                          <span>余额：<b className="text-brand-700">{fmtCents(cardBalanceCents)} 元</b></span>
+                          <span>豆：<b className="text-brand-700">{cardBeans}</b></span>
+                          <span>累计积分：<b className="text-brand-700">{cardPoints}</b></span>
+                        </div>
+                      </div>
+                      <Button size="sm" variant="ghost" onClick={() => setShowSearch(true)}>切换会员卡</Button>
+                    </div>
+                  ) : (
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-ink-500">本客户不是会员，请搜索其他会员卡</span>
+                      <Button size="sm" onClick={() => setShowSearch(true)}>搜索会员卡</Button>
+                    </div>
+                  )}
+                </div>
+
+                {/* Deduction inputs with overage red + 全部抵扣 */}
+                <div className="grid grid-cols-2 gap-3">
+                  <Field
+                    label="卡内余额抵扣（元）"
+                    error={balanceOverage ? `超额！卡内仅剩 ${fmtCents(cardBalanceCents)} 元` : undefined}
+                  >
+                    <div className="flex gap-1">
+                      <Input
+                        type="number"
+                        value={cfg.balanceDeduct}
+                        onChange={(e) => set('balanceDeduct', e.target.value)}
+                        placeholder="如 800"
+                        className={balanceOverage ? 'border-rose-500' : ''}
+                      />
+                      <Button size="sm" variant="ghost" onClick={() => set('balanceDeduct', String(maxBalanceDeduct))}>全部抵扣</Button>
+                    </div>
+                  </Field>
+                  <Field
+                    label="豆抵扣数量（须整百，100豆=1元）"
+                    error={beansOverage ? `超额！卡内仅剩 ${cardBeans} 豆` : undefined}
+                  >
+                    <div className="flex gap-1">
+                      <Input
+                        type="number"
+                        value={cfg.beansDeduct}
+                        onChange={(e) => set('beansDeduct', e.target.value)}
+                        placeholder="如 500"
+                        className={beansOverage ? 'border-rose-500' : ''}
+                      />
+                      <Button size="sm" variant="ghost" onClick={() => set('beansDeduct', String(maxBeansDeduct))}>全部抵扣</Button>
+                    </div>
+                  </Field>
+                </div>
+                <div className="mt-2 flex items-end justify-between">
+                  <div className="text-xs text-ink-500">
+                    抵扣金额合计：{fmtCents(balanceDeductCents + beansDeductAmount)} 元
                   </div>
-                ) : (
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs text-ink-500">未指定，默认本客户（须为会员）</span>
-                    <Button size="sm" onClick={() => setShowSearch(true)}>搜索他人会员卡</Button>
+                  <div className="text-right text-sm">
+                    <span className="text-ink-500">应实付现金：</span>
+                    <span className="font-semibold text-brand-700">{fmtCents(expectedCash)} 元</span>
                   </div>
-                )}
-              </div>
+                </div>
+              </>
             )}
           </div>
 

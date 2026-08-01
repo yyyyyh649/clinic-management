@@ -54,6 +54,8 @@ export const api = {
   dashboard: () => http('GET', '/api/stats/dashboard'),
   revenue: (year: number, month: number, storeId?: string) =>
     http('GET', `/api/stats/revenue?year=${year}&month=${month}${storeId ? `&storeId=${storeId}` : ''}`),
+  funds: (year: number, storeId?: string) =>
+    http('GET', `/api/stats/funds?year=${year}${storeId ? `&storeId=${storeId}` : ''}`),
   performance: (year: number, month: number, storeId?: string) =>
     http('GET', `/api/stats/performance?year=${year}&month=${month}${storeId ? `&storeId=${storeId}` : ''}`),
   performanceByStaff: (staffId: string, year: number) =>
