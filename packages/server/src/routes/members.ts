@@ -4,6 +4,7 @@ import { prisma } from '../db.js';
 import { v4 as uuid } from 'uuid';
 import {
   LEDGER_FIELD, LEDGER_SOURCE, DEPT, computeBatchExpiry, computeTier, selectFIFOConsume,
+  recomputeBatchesFromLedger,
   type BeanExpirySetting,
 } from '@clinic/shared';
 import {
@@ -254,7 +255,13 @@ memberRouter.post('/:id/ledger', async (req, res) => {
     } else if (field === LEDGER_FIELD.BEANS && Number(delta) < 0) {
       // negative beans => FIFO consume from batches
       const batches = await tx.beanBatch.findMany({ where: { memberId } });
-      const plan = selectFIFOConsume(batches as any, Math.abs(Number(delta)));
+      // Rebuild remaining from the append-only Ledger so that LWW sync merge
+      // drift on the stored counter can't let FIFO pick an already-drained
+      // batch. payment-service.ts and electron handlers.ts already do this;
+      // this was the one code path that missed the补丁.
+      const beanLedgers = await tx.ledger.findMany({ where: { memberId, field: LEDGER_FIELD.BEANS } });
+      const reconciledBatches = recomputeBatchesFromLedger(batches as any, beanLedgers as any);
+      const plan = selectFIFOConsume(reconciledBatches, Math.abs(Number(delta)));
       let leftToConsume = Math.abs(Number(delta));
       for (const p of plan) {
         const take = Math.min(leftToConsume, p.consume);

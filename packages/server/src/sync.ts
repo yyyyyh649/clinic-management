@@ -53,7 +53,23 @@ syncRouter.post('/push', async (req, res) => {
   // Bean expiry sweep after merge: pulled/pushed batches may now be past due.
   // Idempotent (deterministic ledger id), so safe to run on every push.
   await expireDueBeanBatches(prisma).catch(() => {});
-  // mark pushed ledgers as synced on server (they came from client; server copy is authoritative now)
+  // Mark pushed Ledgers as SYNCED on the server. Front-desk payments/recharges
+  // create Ledger rows with syncStatus='PENDING' (origin='CLIENT'); once they
+  // reach the server the server holds the authoritative copy, so they are by
+  // definition synced. Without this, anomaly.ts (which only scans
+  // syncStatus='SYNCED' ledgers to detect offline-overdraft) would never see
+  // real front-desk transactions, leaving the safety net blind to the actual
+  // business data — the earlier "mark pushed ledgers as synced" comment was
+  // aspirational and never implemented. Idempotent: only flips PENDING -> SYNCED
+  // (already-SYNCED rows are untouched), and Ledger is append-only with a
+  // createdAt pull cursor so an updatedAt bump here cannot feed the sync loop.
+  const pushedLedgerIds = (records || []).filter((r: SyncRecord) => r.table === 'Ledger').map((r: SyncRecord) => r.id);
+  if (pushedLedgerIds.length) {
+    await prisma.ledger.updateMany({
+      where: { id: { in: pushedLedgerIds }, syncStatus: 'PENDING' },
+      data: { syncStatus: 'SYNCED' },
+    }).catch(() => {});
+  }
   // Recompute anomalies for affected members.
   let anomalies: { memberId: string; field: string; value: number }[] = [];
   if (result.affectedMemberIds.length) {

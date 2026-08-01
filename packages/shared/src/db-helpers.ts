@@ -117,7 +117,16 @@ export async function loadMemberDetail(prisma: PrismaClient, memberId: string) {
     exams,
     usagePayments,
     ledgers: member.ledgers,
-    beanBatches: member.beanBatches,
+    // Reconcile beanBatches.remaining from the append-only Ledger so the 豆到期
+    // 提醒 (which reads batch.remaining) stays consistent with balances.
+    // spendableBeans (shown as 可用豆) already rebuilds from Ledger inside
+    // computeBalances; without this the raw stored counter — which LWW sync
+    // merge can inflate — could make the expiry reminder show more beans than
+    // are actually spendable.
+    beanBatches: recomputeBatchesFromLedger(
+      member.beanBatches as any,
+      member.ledgers.filter((l) => l.field === LEDGER_FIELD.BEANS) as any,
+    ),
   };
 }
 

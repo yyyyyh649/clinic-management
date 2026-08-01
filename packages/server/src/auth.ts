@@ -59,14 +59,5 @@ export function makeAuthRoutes(prisma: PrismaClient) {
         return res.status(400).json({ error: e.message || '修改失败' });
       }
     });
-
-    // Device registration pre-check: requires the BACKEND password (DB-verified).
-    // Actual device/store upsert is handled in sync.ts; here we just validate.
-    router.post('/device/register', async (req, res) => {
-      const { password, storeCode, deviceCode, displayName } = req.body || {};
-      const ok = await verifyPassword(prisma, PASSWORD_KEY.BACKEND, password || '');
-      if (!ok) return res.status(401).json({ error: '后台密码错误，无法注册设备' });
-      return res.json({ ok: true, storeCode, deviceCode, displayName });
-    });
   };
 }
