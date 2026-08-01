@@ -1,6 +1,7 @@
 // 检查详情 (§5.2): full info + customer_id history (会员可跳会员详情) + 复查状态操作.
 // B.7: payment (if any) is shown in full — discount, balance/beans deduct, cash, edit reason,
 //      awarded beans/points, operator & store. Unpaid exams get a 作废本单 + 继续支付 button (B.6).
+// §2.4: versioned edits show revision banners (修正自 / 已废弃→新版). History keeps discarded rows.
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { api } from '../api';
@@ -20,7 +21,10 @@ export default function ExamDetail() {
   const [editBusy, setEditBusy] = useState(false);
   const [err2, setErr2] = useState('');
 
-  // 修改检查单需先校验敏感信息修改密码（向服务器验证），通过后进入编辑表单。
+  // §password-flow: the password is collected here (immediate UX feedback via
+  // verifyChange), then carried to ExamRegister via router state so the write
+  // itself also carries changePassword — the server re-verifies inline. This
+  // closes the loop where the password was verified then dropped.
   async function startEdit() {
     if (!id) return;
     setErr2('');
@@ -28,7 +32,7 @@ export default function ExamDetail() {
     setEditBusy(true);
     try {
       const r = await api.verifyChange(editPwd);
-      if (r.ok) { setEditModal(false); setEditPwd(''); nav(`/exam/${id}/edit`); }
+      if (r.ok) { setEditModal(false); nav(`/exam/${id}/edit`, { state: { changePassword: editPwd } }); setEditPwd(''); }
       else setErr2('修改密码错误');
     } catch (e: any) {
       setErr2(e.message || '验证失败，请检查网络或密码');
@@ -69,12 +73,25 @@ export default function ExamDetail() {
   }
 
   if (!data) return <div className="text-sm text-ink-500">加载中…</div>;
-  const { exam, customer, history } = data;
+  const { exam, customer, history, revisedBy } = data;
   const reviewerCandidates = staff.filter((s) => s.depts?.split(',').includes(exam.dept));
   const pay = exam.payment;
 
   return (
     <div className="space-y-4">
+      {/* §2.4 version banners */}
+      {exam.revisesExamId && (
+        <div className="flex items-center justify-between rounded-md bg-brand-50 px-4 py-2 text-sm text-brand-700">
+          <span>本单是修正版，修正自原始记录</span>
+          <Button size="sm" variant="ghost" onClick={() => nav(`/exam/${exam.revisesExamId}`)}>查看原始记录 →</Button>
+        </div>
+      )}
+      {exam.discardedAt && revisedBy && (
+        <div className="flex items-center justify-between rounded-md bg-slate-100 px-4 py-2 text-sm text-slate-600">
+          <span>本单已废弃，已被修正版替代</span>
+          <Button size="sm" variant="ghost" onClick={() => nav(`/exam/${revisedBy.id}`)}>查看新版 →</Button>
+        </div>
+      )}
       <Card title={`检查详情 · ${exam.dept === 'OPTICAL' ? '配镜部' : '眼科部'}`} extra={<div className="flex gap-2"><Button variant="ghost" onClick={() => setEditModal(true)}>修改检查单</Button><Button variant="ghost" onClick={() => nav('/exam')}>返回列表</Button></div>}>
         <div className="grid grid-cols-3 gap-4">
           <div className="space-y-1.5 text-sm">
@@ -199,13 +216,13 @@ export default function ExamDetail() {
             </thead>
             <tbody>
               {history.map((e: any) => (
-                <tr key={e.id} className="border-b border-slate-100 hover:bg-slate-50 cursor-pointer" onClick={() => nav(`/exam/${e.id}`)}>
+                <tr key={e.id} className={`border-b border-slate-100 hover:bg-slate-50 cursor-pointer ${e.discardedAt ? 'opacity-60' : ''}`} onClick={() => nav(`/exam/${e.id}`)}>
                   <td className="py-2">{fmtDateTime(e.registeredAt)}</td>
                   <td>{e.dept === 'OPTICAL' ? '配镜部' : '眼科部'}</td>
                   <td>{fmtCents(e.baseAmount)}</td>
                   <td>{fmtDate(e.reviewDate)}</td>
                   <td>{e.registeredStoreName}</td>
-                  <td className="text-brand-600">查看 →</td>
+                  <td className="text-brand-600">{e.discardedAt ? <Badge tone="slate">已废弃</Badge> : '查看 →'}</td>
                 </tr>
               ))}
             </tbody>

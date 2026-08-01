@@ -29,6 +29,35 @@ function prepareData(table: SyncTableName, data: Record<string, unknown>): Recor
   return out;
 }
 
+// Detect a true no-op: incoming data is byte-for-byte the same as the existing
+// row (every business field matches). This is critical for breaking the sync
+// loop on config tables (Store/Staff/Tier/Template/Brand/Setting) that clients
+// only ever PULL — without this check, a re-pushed-but-unchanged record would
+// hit Prisma .update(), which unconditionally bumps @updatedAt, making the row
+// look "fresh" on the next pull and re-triggering a push forever. Skipping the
+// write entirely leaves updatedAt untouched and closes the loop.
+function dataUnchanged(incoming: Record<string, unknown>, existing: Record<string, unknown>): boolean {
+  const keys = Object.keys(incoming);
+  for (const k of keys) {
+    const a = incoming[k];
+    const b = existing[k];
+    if (a === b) continue;
+    if (a instanceof Date && b instanceof Date) {
+      if (a.getTime() === b.getTime()) continue;
+      return false;
+    }
+    // Prisma may return Decimal/BigInt wrappers; compare by string value.
+    if (a != null && b != null && typeof a !== 'object' && typeof b !== 'object') {
+      if (String(a) === String(b)) continue;
+      return false;
+    }
+    // null / undefined equivalence
+    if (a == null && b == null) continue;
+    return false;
+  }
+  return true;
+}
+
 export interface ApplyResult {
   applied: number;
   skipped: number;
@@ -66,6 +95,12 @@ export async function applySyncRecords(
         if (existing) {
           const existingUpdated = existing.updatedAt ? new Date(existing.updatedAt) : new Date(0);
           if (incomingUpdated < existingUpdated) { skipped++; continue; }
+          // No-op skip: if the incoming row is identical to what we already have,
+          // do NOT call .update(). Prisma's @updatedAt would otherwise bump to
+          // "now" on a write that changes nothing, making the row look freshly
+          // updated to every other device and feeding the sync loop. Skipping
+          // keeps updatedAt stable so the record stops circulating.
+          if (dataUnchanged(data, existing)) { skipped++; continue; }
           await delegate.update({ where: { [pk]: id }, data });
         } else {
           await delegate.create({ data });

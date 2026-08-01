@@ -116,7 +116,8 @@ statsRouter.get('/performance', async (req, res) => {
   const staffById = new Map(opticalStaff.map((s) => [s.id, s]));
 
   // 2. 配镜部 exams in month (with payments) — keyed by exam.registeredBy (B.2/E).
-  const examWhere: any = { dept: 'OPTICAL', registeredAt: { gte: monthStart, lt: monthEnd }, deletedAt: null, voidedAt: null };
+  // §2.5: exclude discarded revisions so a revised exam isn't counted twice.
+  const examWhere: any = { dept: 'OPTICAL', registeredAt: { gte: monthStart, lt: monthEnd }, deletedAt: null, voidedAt: null, discardedAt: null };
   if (storeId) examWhere.registeredStoreId = storeId;
   const exams = await prisma.examRecord.findMany({ where: examWhere, include: { payment: true } });
 
@@ -198,7 +199,8 @@ statsRouter.get('/dashboard', async (req, res) => {
   const [memberCount, examCount, todayNewMembers, birthdayToday, reviewDue, openAnomalies] = await Promise.all([
     prisma.member.count({ where: { status: 'ACTIVE' } }),
     // B.6: voided unpaid drafts are not real business — exclude from the dashboard count.
-    prisma.examRecord.count({ where: { deletedAt: null, voidedAt: null } }),
+    // §2.5: discarded revisions also excluded (avoid double-counting a revised exam).
+    prisma.examRecord.count({ where: { deletedAt: null, voidedAt: null, discardedAt: null } }),
     prisma.member.count({ where: { registeredAt: { gte: todayStart } } }),
     // birthday today (by month+day)
     prisma.customer.count({
@@ -208,9 +210,9 @@ statsRouter.get('/dashboard', async (req, res) => {
       const customers = await prisma.customer.findMany({ where: { isMember: true, deletedAt: null, birthday: { not: null } }, select: { birthday: true } });
       return customers.filter((c) => { const b = new Date(c.birthday!); return b.getMonth() === now.getMonth() && b.getDate() === now.getDate(); }).length;
     }),
-    // B.6: voided drafts excluded from review-due count.
+    // B.6: voided drafts excluded from review-due count. §2.5: discarded too.
     prisma.examRecord.count({
-      where: { deletedAt: null, voidedAt: null, reviewStatus: { in: ['PENDING', 'CONTACTED'] }, reviewDate: { lte: weekLater } },
+      where: { deletedAt: null, voidedAt: null, discardedAt: null, reviewStatus: { in: ['PENDING', 'CONTACTED'] }, reviewDate: { lte: weekLater } },
     }),
     prisma.anomalyRecord.count({ where: { status: 'OPEN' } }),
   ]);
@@ -246,12 +248,27 @@ statsRouter.get('/recycle', async (req, res) => {
   const items = await prisma.recycleBinEntry.findMany({ where: { deletedAt: { gte: cutoff } }, orderBy: { deletedAt: 'desc' } });
   res.json({ items });
 });
+// Recycle bin stores entityType as a short alias ("EXAM", "MEMBER", ...), but
+// Prisma delegate keys are the lowercased model names. For most models that's a
+// simple first-letter-lowercase, but ExamRecord's model name is "ExamRecord"
+// (delegate "examRecord") — so the alias "EXAM" must NOT be naively converted
+// (it would yield "eXAM" -> undefined delegate -> restore always throws, and
+// permanent-delete silently swallowed the error leaving orphan rows).
+// Map explicitly so future soft-delete entity types just add a line here.
+const ENTITY_MODEL_KEY: Record<string, string> = {
+  EXAM: 'examRecord',
+  MEMBER: 'member',
+  CUSTOMER: 'customer',
+};
+function recycleDelegate(entityType: string): string | null {
+  return ENTITY_MODEL_KEY[entityType] || null;
+}
+
 statsRouter.post('/recycle/:id/restore', async (req, res) => {
   const entry = await prisma.recycleBinEntry.findUnique({ where: { id: req.params.id } });
   if (!entry) return res.status(404).json({ error: '记录不存在' });
-  // restore the entity
-  const key = entry.entityType.charAt(0).toLowerCase() + entry.entityType.slice(1);
-  const snap = JSON.parse(entry.entitySnapshot);
+  const key = recycleDelegate(entry.entityType);
+  if (!key) return res.status(400).json({ error: '未知的实体类型: ' + entry.entityType });
   try {
     await (prisma as any)[key].update({ where: { id: entry.entityId }, data: { deletedAt: null } });
     await prisma.recycleBinEntry.delete({ where: { id: entry.id } });
@@ -264,10 +281,18 @@ statsRouter.delete('/recycle/:id', async (req, res) => {
   // permanently delete (only allowed after 30d retention per spec; here admin force-delete)
   const entry = await prisma.recycleBinEntry.findUnique({ where: { id: req.params.id } });
   if (!entry) return res.status(404).json({ error: '记录不存在' });
-  const key = entry.entityType.charAt(0).toLowerCase() + entry.entityType.slice(1);
-  await (prisma as any)[key].delete({ where: { id: entry.entityId } }).catch(() => {});
-  await prisma.recycleBinEntry.delete({ where: { id: entry.id } });
-  res.json({ ok: true });
+  const key = recycleDelegate(entry.entityType);
+  if (!key) return res.status(400).json({ error: '未知的实体类型: ' + entry.entityType });
+  try {
+    // Do NOT swallow the error: silently ignoring it left the underlying row in
+    // the DB (deletedAt still set) while the RecycleBinEntry was removed,
+    // producing orphan data that is neither restorable nor purgeable.
+    await (prisma as any)[key].delete({ where: { id: entry.entityId } });
+    await prisma.recycleBinEntry.delete({ where: { id: entry.id } });
+    res.json({ ok: true });
+  } catch (e: any) {
+    res.status(400).json({ error: '永久删除失败: ' + e.message });
+  }
 });
 
 // ---------- Audit log query (§7.3) ----------

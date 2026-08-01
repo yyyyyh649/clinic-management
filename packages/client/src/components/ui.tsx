@@ -1,9 +1,13 @@
 // Shared UI primitives for the front-desk client.
 import React from 'react';
+// 元转分等纯函数统一走 @clinic/shared/constants 这一个入口（避免各页面手写
+// Math.round(parseFloat(x)*100) 重复实现）。constants.ts 不引入 Prisma，通过
+// vite 别名安全到达 renderer。
+export { parseYuanToCents } from '@clinic/shared/constants';
 
 export function Button({
   variant = 'primary', size, className, ...props
-}: React.ButtonHTMLAttributes<HTMLButtonElement> & { variant?: 'primary' | 'ghost' | 'danger' | 'subtle' }) {
+}: React.ButtonHTMLAttributes<HTMLButtonElement> & { variant?: 'primary' | 'ghost' | 'danger' | 'subtle'; size?: 'sm' | 'md' }) {
   const cls = variant === 'primary' ? 'btn-primary'
     : variant === 'ghost' ? 'btn-ghost'
     : variant === 'danger' ? 'btn-danger'
@@ -95,10 +99,6 @@ export function fmtCents(c: number | null | undefined): string {
   const sign = c < 0 ? '-' : '';
   const abs = Math.abs(Math.round(c));
   return `${sign}${Math.floor(abs / 100)}.${(abs % 100).toString().padStart(2, '0')}`;
-}
-export function parseYuan(s: string): number {
-  const n = parseFloat(s);
-  return Number.isNaN(n) ? 0 : Math.round(n * 100);
 }
 export function fmtDate(d: Date | string | null | undefined): string {
   if (!d) return '';

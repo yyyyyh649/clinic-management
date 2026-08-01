@@ -55,8 +55,10 @@ export const api = {
   // members
   registerMember: (input: any) => (electronApi ? electronApi.registerMember(input) : http('POST', '/api/members', input)),
   getMember: (id: string) => (electronApi ? electronApi.getMember(id) : http('GET', `/api/members/${id}`)),
-  listMembers: (filters: Record<string, string | number>) => {
-    const qs = new URLSearchParams(filters as any).toString();
+  listMembers: (filters: Record<string, string | number | undefined>) => {
+    const qs = new URLSearchParams(
+      Object.fromEntries(Object.entries(filters).filter(([, v]) => v != null)) as any,
+    ).toString();
     return electronApi ? electronApi.listMembers(filters) : http('GET', `/api/members?${qs}`);
   },
   adjustLedger: (memberId: string, input: any) =>
@@ -67,8 +69,10 @@ export const api = {
   // exams
   createExam: (input: any) => (electronApi ? electronApi.createExam(input) : http('POST', '/api/exams', input)),
   getExam: (id: string) => (electronApi ? electronApi.getExam(id) : http('GET', `/api/exams/${id}`)),
-  listExams: (filters: Record<string, string | number>) => {
-    const qs = new URLSearchParams(filters as any).toString();
+  listExams: (filters: Record<string, string | number | undefined>) => {
+    const qs = new URLSearchParams(
+      Object.fromEntries(Object.entries(filters).filter(([, v]) => v != null)) as any,
+    ).toString();
     return electronApi ? electronApi.listExams(filters) : http('GET', `/api/exams?${qs}`);
   },
   updateReview: (id: string, input: any) =>

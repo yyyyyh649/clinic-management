@@ -9,9 +9,9 @@
 // 模板内容、品牌价格、登记人），提交走 updateExam 而非 createExam，提交后回详情页（不跳支付）。
 // 客户信息（姓名/手机号）为只读展示——那属于客户实体，改手机号需走会员详情的敏感修改流程。
 import { useEffect, useState, useMemo } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { api } from '../api';
-import { Button, Card, Field, Input, Select, TextArea, fmtCents } from '../components/ui';
+import { Button, Card, Field, Input, Select, TextArea, fmtCents, parseYuanToCents } from '../components/ui';
 import { PhoneInput, isPhoneValid } from '../components/PhoneInput';
 // DEFAULT_REVIEW_DAYS = 90 (defined inline to avoid importing @clinic/shared,
 // whose barrel re-exports the Prisma client — pulling Prisma into the renderer
@@ -44,6 +44,10 @@ export default function ExamRegister() {
   const params = useParams();
   const editId = params.id as string | undefined; // 存在 => 编辑模式
   const nav = useNavigate();
+  const loc = useLocation();
+  // §password-flow: the CHANGE password verified in ExamDetail is carried here
+  // via router state and submitted with the write (server re-verifies inline).
+  const editPwd = (loc.state as any)?.changePassword as string | undefined;
   const [staff, setStaff] = useState<any[]>([]);
   const [templates, setTemplates] = useState<any[]>([]);
   const [brands, setBrands] = useState<any[]>([]);
@@ -160,6 +164,7 @@ export default function ExamRegister() {
   async function submit() {
     if (!registeredById) { setErr('请选择登记人'); return; }
     if (!reviewDays.trim() || Number.isNaN(reviewDaysNum)) { setErr('请填写复查天数'); return; }
+    if (editId && !editPwd) { setErr('缺少修改密码，请返回详情页重新通过密码验证'); return; }
     setErr(''); setBusy(true);
     try {
       const reg = staff.find((s) => s.id === registeredById);
@@ -169,18 +174,22 @@ export default function ExamRegister() {
         templateName: tpl?.name,
         content: tplPages.length ? { template: tplPages, answers } : undefined,
         lensBrand: dept === 'OPTICAL' ? optical.lensBrand || undefined : undefined,
-        lensPrice: dept === 'OPTICAL' ? Math.round(parseFloat(optical.lensPrice || '0') * 100) : undefined,
+        lensPrice: dept === 'OPTICAL' ? parseYuanToCents(optical.lensPrice || '0') : undefined,
         frameBrand: dept === 'OPTICAL' ? optical.frameBrand || undefined : undefined,
-        framePrice: dept === 'OPTICAL' ? Math.round(parseFloat(optical.framePrice || '0') * 100) : undefined,
-        totalAmount: dept === 'EYE' ? Math.round(parseFloat(eyeTotal) * 100) : undefined,
+        framePrice: dept === 'OPTICAL' ? parseYuanToCents(optical.framePrice || '0') : undefined,
+        totalAmount: dept === 'EYE' ? parseYuanToCents(eyeTotal) : undefined,
         reviewDate: computedReviewDate,
         reviewNote: reviewNote || undefined,
         registeredById, registeredByName: reg?.name || '',
         registeredAt,
+        // §password-flow: password travels with the write (server re-verifies).
+        changePassword: editId ? editPwd : undefined,
       };
       if (editId) {
-        await api.updateExam(editId, payload);
-        nav(`/exam/${editId}`);
+        // §2.2 versioning: updateExam returns the NEW revision record (new id),
+        // not the old one. Navigate to the new record so the user sees the fresh version.
+        const created = await api.updateExam(editId, payload);
+        nav(`/exam/${created.id}`);
       } else {
         const exam = await api.createExam({
           ...payload,
@@ -324,7 +333,7 @@ export default function ExamRegister() {
                 </Field>
                 <div className="col-span-2 text-right text-xs text-ink-500">
                   应付基础金额：{fmtCents(
-                    (parseFloat(optical.lensPrice || '0') + parseFloat(optical.framePrice || '0')) * 100,
+                    parseYuanToCents(optical.lensPrice || '0') + parseYuanToCents(optical.framePrice || '0'),
                   )} 元
                 </div>
               </div>

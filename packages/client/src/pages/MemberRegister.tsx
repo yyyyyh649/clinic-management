@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../api';
-import { Button, Card, Field, Input, Modal, Badge, fmtCents } from '../components/ui';
+import { Button, Card, Field, Input, Modal, Badge, fmtCents, parseYuanToCents } from '../components/ui';
 import { PhoneInput, isPhoneValid } from '../components/PhoneInput';
 
 const todayStr = () => new Date().toISOString().slice(0, 10);
@@ -77,7 +77,7 @@ export default function MemberRegister() {
         birthday: form.birthday, address: form.address || undefined,
         registeredById: form.registeredById,
         registeredByName: staffObj?.name || '',
-        initialBalanceCents: form.initialBalance ? Math.round(parseFloat(form.initialBalance) * 100) : 0,
+        initialBalanceCents: form.initialBalance ? parseYuanToCents(form.initialBalance) : 0,
         initialBeans: form.initialBeans ? parseInt(form.initialBeans, 10) || 0 : 0,
         customerId: reuseCustomerId || undefined,
       });

@@ -1,6 +1,7 @@
 // 检查查询 (§5.2): filters, 需复查置顶, 距复查天数.
 // B.6: default list shows only PAID exams; a "待支付" tab shows unpaid drafts
 //      (with a 作废 button to discard an unfinished draft without using the recycle bin).
+// §2.4: a "显示已废弃" toggle reveals superseded revisions (grey "已废弃" tag).
 import { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '../api';
@@ -15,6 +16,7 @@ export default function ExamQuery() {
   const [items, setItems] = useState<any[]>([]);
   const [filters, setFilters] = useState({ dept: '', storeId: '', status: '', daysToReview: '' });
   const [tab, setTab] = useState<Tab>('paid');
+  const [showDiscarded, setShowDiscarded] = useState(false);
   const [loading, setLoading] = useState(true);
   const [voiding, setVoiding] = useState<string | null>(null);
 
@@ -23,15 +25,16 @@ export default function ExamQuery() {
     setLoading(true);
     try {
       const days = sp.get('filter') === 'due' ? '7' : (filters.daysToReview || undefined);
+      const include = tab === 'unpaid' ? 'unpaid' : showDiscarded ? 'discarded' : undefined;
       const r = await api.listExams({
         dept: filters.dept || undefined, storeId: filters.storeId || undefined,
         status: filters.status || undefined, daysToReview: days,
-        include: tab === 'unpaid' ? 'unpaid' : undefined,
+        include,
       });
       setItems(r.items || []);
     } finally { setLoading(false); }
   }
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, [sp, tab]);
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, [sp, tab, showDiscarded]);
 
   async function voidDraft(id: string) {
     if (!confirm('确认作废这条未支付的草稿？作废后不会出现在任何统计和列表里（不可恢复）。')) return;
@@ -49,7 +52,7 @@ export default function ExamQuery() {
   return (
     <div className="space-y-4">
       <Card title="检查查询">
-        <div className="mb-3 flex gap-2">
+        <div className="mb-3 flex items-center gap-2">
           <button
             className={`rounded-md px-3 py-1.5 text-sm ${tab === 'paid' ? 'bg-brand-600 text-white' : 'bg-slate-100 text-ink-700 hover:bg-slate-200'}`}
             onClick={() => setTab('paid')}
@@ -58,6 +61,12 @@ export default function ExamQuery() {
             className={`rounded-md px-3 py-1.5 text-sm ${tab === 'unpaid' ? 'bg-brand-600 text-white' : 'bg-slate-100 text-ink-700 hover:bg-slate-200'}`}
             onClick={() => setTab('unpaid')}
           >待支付草稿</button>
+          {tab === 'paid' && (
+            <label className="ml-auto flex cursor-pointer items-center gap-1.5 text-xs text-ink-600">
+              <input type="checkbox" checked={showDiscarded} onChange={(e) => setShowDiscarded(e.target.checked)} />
+              显示已废弃
+            </label>
+          )}
         </div>
         <div className="grid grid-cols-5 gap-3">
           <Select value={filters.dept} onChange={(e) => setFilters((f) => ({ ...f, dept: e.target.value }))}>
@@ -94,7 +103,7 @@ export default function ExamQuery() {
               </thead>
               <tbody>
                 {items.map((e) => (
-                  <tr key={e.id} className="border-b border-slate-100 hover:bg-slate-50">
+                  <tr key={e.id} className={`border-b border-slate-100 hover:bg-slate-50 ${e.discardedAt ? 'opacity-60' : ''}`}>
                     <td className="py-2 cursor-pointer" onClick={() => nav(`/exam/${e.id}`)}>{fmtDateTime(e.registeredAt)}</td>
                     <td className="cursor-pointer font-medium text-ink-900" onClick={() => nav(`/exam/${e.id}`)}>{e.customerName}</td>
                     <td className="cursor-pointer" onClick={() => nav(`/exam/${e.id}`)}>{e.phone}</td>
@@ -109,7 +118,9 @@ export default function ExamQuery() {
                     <td className="cursor-pointer" onClick={() => nav(`/exam/${e.id}`)}>{e.registeredBy}</td>
                     <td className="cursor-pointer" onClick={() => nav(`/exam/${e.id}`)}>{e.registeredStoreName}</td>
                     {tab === 'paid' ? (
-                      <td className="cursor-pointer" onClick={() => nav(`/exam/${e.id}`)}>{statusBadge(e.reviewStatus)}</td>
+                      <td className="cursor-pointer" onClick={() => nav(`/exam/${e.id}`)}>
+                        {e.discardedAt ? <Badge tone="slate">已废弃</Badge> : statusBadge(e.reviewStatus)}
+                      </td>
                     ) : (
                       <td className="whitespace-nowrap">
                         <Button size="sm" onClick={() => nav(`/payment/${e.id}`)}>继续支付</Button>

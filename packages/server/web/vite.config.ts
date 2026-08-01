@@ -8,7 +8,13 @@ export default defineConfig({
   plugins: [react()],
   root: __dirname,
   base: '/',
-  resolve: { alias: { '@': path.resolve(__dirname, 'src') } },
+  resolve: {
+    alias: {
+      '@': path.resolve(__dirname, 'src'),
+      // Pure constants (no Prisma) — same reason as the client renderer.
+      '@clinic/shared/constants': path.resolve(__dirname, '../../shared/src/constants.ts'),
+    },
+  },
   server: {
     port: 5175,
     proxy: { '/api': { target: 'http://localhost:4000', changeOrigin: true } },

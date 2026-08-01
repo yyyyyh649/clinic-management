@@ -26,7 +26,7 @@ export const DATE_FIELDS: Record<string, string[]> = {
   Member: ['registeredAt', 'deletedAt', 'createdAt', 'updatedAt'],
   Ledger: ['createdAt', 'syncedAt'],
   BeanBatch: ['expiresAt', 'createdAt'],
-  ExamRecord: ['reviewDate', 'registeredAt', 'createdAt', 'updatedAt', 'deletedAt'],
+  ExamRecord: ['reviewDate', 'registeredAt', 'createdAt', 'updatedAt', 'deletedAt', 'discardedAt'],
   Payment: ['createdAt', 'updatedAt'],
   Recharge: ['createdAt', 'updatedAt'],
   TierRule: ['createdAt', 'updatedAt'],

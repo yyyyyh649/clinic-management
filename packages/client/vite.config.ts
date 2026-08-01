@@ -7,7 +7,14 @@ export default defineConfig({
   root: '.',
   base: './',
   resolve: {
-    alias: { '@': path.resolve(__dirname, 'src') },
+    alias: {
+      '@': path.resolve(__dirname, 'src'),
+      // Pure constants (no Prisma) reachable from the renderer. The shared
+      // barrel re-exports the Prisma client which breaks the browser bundle
+      // ("process is not defined"), so we alias a Prisma-free subpath to the
+      // source constants.ts directly. parseYuanToCents etc. live here.
+      '@clinic/shared/constants': path.resolve(__dirname, '../shared/src/constants.ts'),
+    },
   },
   server: {
     port: 5174,

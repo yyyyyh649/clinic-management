@@ -287,12 +287,20 @@ model ExamRecord {
   // removes it from all lists/stats without going through the recycle bin
   // (it never constituted a completed business transaction).
   voidedAt  DateTime?
+  // 版本化编辑 (§2.2): editing a (typically paid) exam no longer overwrites the
+  // original record. The old record is marked discardedAt (null = 有效), and a
+  // new ExamRecord is created with revisesExamId pointing back to the old one.
+  // Payment rows stay attached to whichever record they were created on and are
+  // never moved/rewritten (历史收款不可改写).
+  discardedAt   DateTime?
+  revisesExamId String?
 
   @@index([customerId])
   @@index([reviewStatus])
   @@index([reviewDate])
   @@index([registeredStoreId])
   @@index([dept])
+  @@index([revisesExamId])
 }
 
 // ---------- Payment ----------

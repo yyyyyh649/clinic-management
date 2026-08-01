@@ -9,7 +9,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { api, isElectron } from '../api';
 import { useSyncStatus } from '../hooks/useApp';
-import { Button, Card, Field, Input, Select, Modal, Badge, fmtCents, parseYuan } from '../components/ui';
+import { Button, Card, Field, Input, Select, Modal, Badge, fmtCents, parseYuanToCents } from '../components/ui';
 
 interface PaymentConfig {
   discountType: '' | 'PERCENT' | 'MINUS';
@@ -84,13 +84,13 @@ export default function Payment() {
       const v = parseFloat(cfg.discountValue);
       if (!Number.isNaN(v)) return Math.round((baseAmount * v) / 100);
     } else if (cfg.discountType === 'MINUS' && cfg.discountValue) {
-      const v = parseYuan(cfg.discountValue);
+      const v = parseYuanToCents(cfg.discountValue);
       return Math.max(0, baseAmount - v);
     }
     return baseAmount;
   }, [baseAmount, cfg.discountType, cfg.discountValue]);
 
-  const balanceDeductCents = cfg.balanceDeduct ? parseYuan(cfg.balanceDeduct) : 0;
+  const balanceDeductCents = cfg.balanceDeduct ? parseYuanToCents(cfg.balanceDeduct) : 0;
   const beansDeductCount = cfg.beansDeduct ? parseInt(cfg.beansDeduct, 10) || 0 : 0;
   const beansDeductAmount = beansDeductCount; // 1豆 = 1分
   const expectedCash = Math.max(0, afterDiscount - balanceDeductCents - beansDeductAmount);
@@ -113,7 +113,7 @@ export default function Payment() {
     if (!touched.cash) setCfg((c) => ({ ...c, cashPaid: fmtCents(expectedCash) }));
   }, [expectedCash, touched.cash]);
 
-  const cashPaidCents = cfg.cashPaid ? parseYuan(cfg.cashPaid) : 0;
+  const cashPaidCents = cfg.cashPaid ? parseYuanToCents(cfg.cashPaid) : 0;
   const cashMismatch = cashPaidCents !== expectedCash;
   const needsReason = cashMismatch && !cfg.editReason.trim();
 
@@ -170,7 +170,7 @@ export default function Payment() {
       const res = await api.createPayment({
         examId,
         discountType: cfg.discountType || undefined,
-        discountValue: cfg.discountType === 'PERCENT' ? parseFloat(cfg.discountValue || '0') : (cfg.discountType === 'MINUS' ? parseYuan(cfg.discountValue) : undefined),
+        discountValue: cfg.discountType === 'PERCENT' ? parseFloat(cfg.discountValue || '0') : (cfg.discountType === 'MINUS' ? parseYuanToCents(cfg.discountValue) : undefined),
         balanceDeductCents,
         beansDeductCount,
         payForMemberId: cfg.payForMemberId || undefined,

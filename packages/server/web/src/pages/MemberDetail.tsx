@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { api } from '../api';
 import { Card, Button, Badge, Modal, Field, Input, Select, TextArea, EmptyState, fmtDate, fmtDateTime, fmtCents } from '../components/ui';
 import { PhoneInput, isPhoneValid } from '../components/PhoneInput';
+import { parseYuanToCents } from '@clinic/shared/constants';
 
 const LEDGER_FIELDS = [
   { value: 'BALANCE', label: '卡内余额（元）' },
@@ -36,7 +37,7 @@ export default function MemberDetail() {
     if (!adj.delta || !adj.reason.trim()) { setErr('增减量和备注必填'); return; }
     setBusy(true);
     try {
-      const cents = adj.field === 'BALANCE' ? Math.round(parseFloat(adj.delta) * 100) : parseInt(adj.delta, 10);
+      const cents = adj.field === 'BALANCE' ? parseYuanToCents(adj.delta) : parseInt(adj.delta, 10);
       await api.adjustLedger(id!, { field: adj.field, delta: cents, reason: adj.reason, operatorName: '后台' });
       setShowAdj(false);
       setAdj({ field: 'BALANCE', delta: '', reason: '' });
@@ -122,12 +123,12 @@ export default function MemberDetail() {
             </thead>
             <tbody>
               {exams.map((e: any) => (
-                <tr key={e.id} className="border-b border-slate-100">
+                <tr key={e.id} className={`border-b border-slate-100 ${e.discardedAt ? 'opacity-60' : ''}`}>
                   <td className="py-2">{fmtDateTime(e.registeredAt)}</td>
                   <td>{e.dept === 'OPTICAL' ? '配镜部' : '眼科部'}</td>
                   <td>{fmtCents(e.baseAmount)}</td>
                   <td>{fmtDate(e.reviewDate)}</td>
-                  <td><Badge tone={e.reviewStatus === 'REVIEWED' ? 'green' : e.reviewStatus === 'PENDING' ? 'amber' : 'slate'}>{statusLabel(e.reviewStatus)}</Badge></td>
+                  <td>{e.discardedAt ? <Badge tone="slate">已废弃</Badge> : <Badge tone={e.reviewStatus === 'REVIEWED' ? 'green' : e.reviewStatus === 'PENDING' ? 'amber' : 'slate'}>{statusLabel(e.reviewStatus)}</Badge>}</td>
                   <td>{e.registeredStoreName}</td>
                 </tr>
               ))}

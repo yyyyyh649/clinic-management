@@ -125,6 +125,18 @@ async function pullOnce(): Promise<number> {
   // push back to the server (dedup by id keeps it safe).
   await expireDueBeanBatches(prisma, new Date(), 'CLIENT').catch(() => {});
   state.pullCursors = { ...state.pullCursors, ...(body.cursors || {}) };
+  // Align push cursors with pull cursors. Config tables (Store/Staff/Tier/
+  // Template/Brand/Setting) are only ever PULLED by the front desk — the client
+  // never writes them, so lastPushAt[table] was never set, leaving countPending
+  // to treat every pulled row as "new" and re-push it every cycle. Advancing
+  // lastPushAt to the pull cursor means rows the server just sent us (whose
+  // dateField <= cursor) are no longer counted as pending. Both cursors use the
+  // same dateField per table (see TABLE_DATE in this file and server sync.ts),
+  // so they are directly comparable.
+  for (const [table, cursor] of Object.entries(body.cursors || {})) {
+    const prev = state.lastPushAt[table];
+    if (!prev || cursor > prev) state.lastPushAt[table] = cursor as string;
+  }
   return (body.records || []).length;
 }
 

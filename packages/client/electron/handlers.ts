@@ -12,6 +12,7 @@ import {
   computeTier, computeAge, memberDaysSince, isPendingReview, reviewDaysRemaining, computeBatchExpiry,
   type BeanExpirySetting,
   LEDGER_FIELD, LEDGER_SOURCE, DISCOUNT_TYPE, BEAN_REDEEM_MULTIPLE, DEPT, DEFAULT_REVIEW_DAYS, REVIEW_STATUS,
+  parseYuanToCents,
 } from '@clinic/shared';
 
 function p() { return getPrisma(); }
@@ -19,6 +20,24 @@ function stamp(input: any) {
   const dev = getDeviceIdentity();
   if (!dev) return input;
   return { ...input, storeId: dev.storeId, storeName: dev.storeName, deviceId: dev.deviceId };
+}
+// Verify the sensitive-edit (CHANGE) password against the SERVER. Passwords are
+// DB-stored on the server only (never pulled to client devices), so the Electron
+// client must round-trip to verify. Offline => sensitive edits are unavailable
+// (same premise as backend admin login). Used by updateExam / updateMember so
+// that "改内容+密码" is verified in the same operation as the write, matching the
+// HTTP path (server route verifies inline) — not a separate pre-verify step whose
+// result the client could then ignore.
+async function verifyChangePasswordOnline(password: string): Promise<boolean> {
+  const base = getServerUrl().replace(/\/+$/, '');
+  const r = await fetch(`${base}/api/auth/verify-change`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ password: password || '' }),
+    signal: AbortSignal.timeout(8000),
+  });
+  if (!r.ok) throw new Error('无法连接服务器验证修改密码');
+  const data = (await r.json()) as { ok: boolean };
+  return !!data.ok;
 }
 async function beanSetting(): Promise<BeanExpirySetting> {
   const [en, mo] = await Promise.all([
@@ -172,7 +191,7 @@ export function registerHandlers(getWin: () => BrowserWindow | null) {
     // revenue report's cash pool reflects real cash-in (otherwise the cash
     // pool would always be 0 for manual balance edits).
     const cashReceivedCents = (field === LEDGER_FIELD.BALANCE && Number(delta) > 0 && cashReceivedYuan)
-      ? Math.round(parseFloat(cashReceivedYuan) * 100) : 0;
+      ? parseYuanToCents(cashReceivedYuan) : 0;
     await p().$transaction(async (tx) => {
       if (field === LEDGER_FIELD.BEANS && Number(delta) > 0) {
         const batchId = uuid();
@@ -203,12 +222,20 @@ export function registerHandlers(getWin: () => BrowserWindow | null) {
   ipcMain.handle('clinic:updateMember', async (_e, { memberId, input }: any) => {
     const member = await p().member.findUnique({ where: { id: memberId }, include: { customer: true } });
     if (!member) throw new Error('会员不存在');
-    const { name, phone, address, birthday } = input || {};
+    const { name, phone, address, birthday, changePassword } = input || {};
     const customer = member.customer!;
-    if (phone && phone !== customer.phone) {
+    // §password-flow: verify the CHANGE password inline (same operation as the
+    // write) when the phone is being changed — mirrors the server route. The
+    // Electron client round-trips to the server because passwords aren't local.
+    const touchingSensitive = phone !== undefined && phone !== customer.phone;
+    if (touchingSensitive) {
+      const ok = await verifyChangePasswordOnline(changePassword || '');
+      if (!ok) throw new Error('修改手机号需要敏感信息修改密码验证通过');
+    }
+    if (touchingSensitive) {
       await p().phoneHistory.create({ data: { id: uuid(), customerId: customer.id, oldPhone: customer.phone, newPhone: phone, changedBy: input.operatorId || '前台', changedByName: input.operatorName || '前台', storeId: stamp(input).storeId, reason: input.reason || '前台修改手机号' } });
     }
-    await p().customer.update({ where: { id: customer.id }, data: { name, phone, address, birthday: birthday ? new Date(birthday) : undefined } });
+    await p().customer.update({ where: { id: customer.id }, data: { name, phone: touchingSensitive ? phone : undefined, address, birthday: birthday ? new Date(birthday) : undefined } });
     return { ok: true };
   });
 
@@ -235,23 +262,32 @@ export function registerHandlers(getWin: () => BrowserWindow | null) {
   ipcMain.handle('clinic:getExam', async (_e, id: string) => {
     const exam = await p().examRecord.findUnique({ where: { id }, include: { customer: { include: { member: true } }, payment: true } });
     if (!exam) throw new Error('检查记录不存在');
-    // B.6: history excludes voided unpaid drafts.
+    // B.6: history excludes voided unpaid drafts. §2.4: KEEPS discarded revisions.
     const history = await p().examRecord.findMany({ where: { customerId: exam.customerId, deletedAt: null, voidedAt: null, id: { not: exam.id } }, orderBy: { registeredAt: 'desc' } });
-    return { exam: { ...exam, content: exam.content ? JSON.parse(exam.content) : [] }, customer: exam.customer, history, age: computeAge(exam.customer?.birthday) };
+    // §2.4: if this record was superseded, find the newer revision for the banner link.
+    let revisedBy: { id: string; createdAt: Date } | null = null;
+    if (exam.discardedAt) {
+      const newer = await p().examRecord.findFirst({ where: { revisesExamId: exam.id }, select: { id: true, createdAt: true } });
+      if (newer) revisedBy = newer;
+    }
+    return { exam: { ...exam, content: exam.content ? JSON.parse(exam.content) : [] }, customer: exam.customer, history, age: computeAge(exam.customer?.birthday), revisedBy };
   });
 
   ipcMain.handle('clinic:listExams', async (_e, filters: any) => {
     const { dept, storeId, status, include } = filters || {};
     const daysToReview = filters.daysToReview ? Number(filters.daysToReview) : undefined;
     const where: any = { deletedAt: null, voidedAt: null };
+    // §2.4: hide discarded revisions unless explicitly requested.
+    if (include !== 'discarded') where.discardedAt = null;
     if (dept) where.dept = dept;
     if (storeId) where.registeredStoreId = storeId;
     if (status) where.reviewStatus = status;
     // B.6: default only PAID exams; include=unpaid shows the 待支付 drafts.
-    if (include !== 'unpaid') where.payment = { isNot: null };
+    // When showing discarded revisions, don't enforce the payment filter.
+    if (include !== 'unpaid' && include !== 'discarded') where.payment = { isNot: null };
     const exams = await p().examRecord.findMany({ where, include: { customer: true, payment: true }, orderBy: { registeredAt: 'desc' } });
     const now = new Date();
-    let rows = exams.map((e) => ({ id: e.id, dept: e.dept, deptLabel: e.dept === DEPT.OPTICAL ? '配镜部' : '眼科部', customerName: e.customer?.name, phone: e.customer?.phone, age: computeAge(e.customer?.birthday), registeredBy: e.registeredByName, registeredAt: e.registeredAt, registeredStoreName: e.registeredStoreName, registeredStoreId: e.registeredStoreId, reviewDate: e.reviewDate, reviewStatus: e.reviewStatus, daysToReview: reviewDaysRemaining(e.reviewDate, now), needsReview: isPendingReview(e as any, now), lensBrand: e.lensBrand, frameBrand: e.frameBrand, baseAmount: e.baseAmount, hasPayment: !!e.payment }));
+    let rows = exams.map((e) => ({ id: e.id, dept: e.dept, deptLabel: e.dept === DEPT.OPTICAL ? '配镜部' : '眼科部', customerName: e.customer?.name, phone: e.customer?.phone, age: computeAge(e.customer?.birthday), registeredBy: e.registeredByName, registeredAt: e.registeredAt, registeredStoreName: e.registeredStoreName, registeredStoreId: e.registeredStoreId, reviewDate: e.reviewDate, reviewStatus: e.reviewStatus, daysToReview: reviewDaysRemaining(e.reviewDate, now), needsReview: isPendingReview(e as any, now), lensBrand: e.lensBrand, frameBrand: e.frameBrand, baseAmount: e.baseAmount, hasPayment: !!e.payment, discardedAt: e.discardedAt, revisesExamId: e.revisesExamId }));
     if (daysToReview !== undefined) rows = rows.filter((r) => r.daysToReview !== null && r.daysToReview <= daysToReview);
     const rank = (r: any) => (r.reviewStatus === REVIEW_STATUS.CONTACTED_NO_SHOW ? 2 : r.needsReview ? 0 : 1);
     rows.sort((a, b) => { const ra = rank(a), rb = rank(b); if (ra !== rb) return ra - rb; return new Date(b.registeredAt).getTime() - new Date(a.registeredAt).getTime(); });
@@ -290,12 +326,16 @@ export function registerHandlers(getWin: () => BrowserWindow | null) {
     return (await r.json()) as { ok: boolean };
   });
 
-  // 修改检查单：全字段可改（含登记时间、复查日期、模板内容、品牌价格、登记人）。
-  // 相当于重新填一次检查单，旧值已预填。payment 不动（支付是独立记录，如需改走另行处理）。
-  // updatedAt 由 Prisma @updatedAt 自动刷新 -> LWW 同步把改动推到云端。
+  // 修改检查单（版本化保留 §2.2 + 密码同次校验 §password-flow）：
+  // 不覆盖旧记录，而是标记旧记录 discardedAt + 新建一条修正版（revisesExamId 指向旧记录）。
+  // 旧记录上的 Payment 不动（历史收款不可改写）。新记录初始未支付，如涉及金额变化走"继续支付"。
+  // 密码随提交一起校验（向服务器验证，与 HTTP 路径的 server route 一致），不是单独的预校验。
   ipcMain.handle('clinic:updateExam', async (_e, { id, input }: any) => {
     const exam = await p().examRecord.findUnique({ where: { id } });
     if (!exam) throw new Error('检查记录不存在');
+    const { changePassword: cp } = input || {};
+    const ok = await verifyChangePasswordOnline(cp || '');
+    if (!ok) throw new Error('修改检查单需要敏感信息修改密码验证通过');
     const {
       dept, templateId, templateName, content,
       lensBrand, lensPrice, frameBrand, framePrice, totalAmount,
@@ -306,28 +346,43 @@ export function registerHandlers(getWin: () => BrowserWindow | null) {
     const baseAmount = d === DEPT.OPTICAL
       ? (Number(lensPrice ?? exam.lensPrice) || 0) + (Number(framePrice ?? exam.framePrice) || 0)
       : (Number(totalAmount ?? exam.totalAmount) || 0);
-    const data: any = {
-      dept: d,
-      templateId: templateId !== undefined ? (templateId || null) : undefined,
-      templateName: templateName !== undefined ? (templateName || null) : undefined,
-      content: content !== undefined ? (content ? JSON.stringify(content) : null) : undefined,
-      lensBrand: lensBrand !== undefined ? (lensBrand || null) : undefined,
-      lensPrice: lensPrice !== undefined ? (d === DEPT.OPTICAL ? Number(lensPrice) : null) : undefined,
-      frameBrand: frameBrand !== undefined ? (frameBrand || null) : undefined,
-      framePrice: framePrice !== undefined ? (d === DEPT.OPTICAL ? Number(framePrice) : null) : undefined,
-      totalAmount: totalAmount !== undefined ? (d === DEPT.EYE ? Number(totalAmount) : null) : undefined,
-      baseAmount,
-      reviewDate: reviewDate !== undefined ? new Date(reviewDate) : undefined,
-      reviewerId: reviewerId !== undefined ? (reviewerId || null) : undefined,
-      reviewerName: reviewerName !== undefined ? (reviewerName || null) : undefined,
-      reviewNote: reviewNote !== undefined ? (reviewNote || null) : undefined,
-      registeredBy: registeredById !== undefined ? registeredById : undefined,
-      registeredByName: registeredByName !== undefined ? registeredByName : undefined,
-      registeredAt: registeredAt ? new Date(registeredAt) : undefined,
-    };
-    // strip undefined so Prisma only writes provided fields
-    Object.keys(data).forEach((k) => data[k] === undefined && delete data[k]);
-    return p().examRecord.update({ where: { id }, data });
+    const newId = uuid();
+    const now = new Date();
+    // 1. Mark old record discarded. 2. Create revision with modified values.
+    // Immutable associations (customerId/store/device) carry over from old.
+    const [/* _old */, created] = await p().$transaction([
+      p().examRecord.update({ where: { id: exam.id }, data: { discardedAt: now } }),
+      p().examRecord.create({
+        data: {
+          id: newId,
+          customerId: exam.customerId,
+          dept: d,
+          templateId: templateId !== undefined ? (templateId || null) : exam.templateId,
+          templateName: templateName !== undefined ? (templateName || null) : exam.templateName,
+          content: content !== undefined ? (content ? JSON.stringify(content) : null) : exam.content,
+          lensBrand: lensBrand !== undefined ? (lensBrand || null) : exam.lensBrand,
+          lensPrice: lensPrice !== undefined ? (d === DEPT.OPTICAL ? Number(lensPrice) : null) : exam.lensPrice,
+          frameBrand: frameBrand !== undefined ? (frameBrand || null) : exam.frameBrand,
+          framePrice: framePrice !== undefined ? (d === DEPT.OPTICAL ? Number(framePrice) : null) : exam.framePrice,
+          totalAmount: totalAmount !== undefined ? (d === DEPT.EYE ? Number(totalAmount) : null) : exam.totalAmount,
+          baseAmount,
+          reviewDate: reviewDate !== undefined ? new Date(reviewDate) : exam.reviewDate,
+          reviewerId: reviewerId !== undefined ? (reviewerId || null) : exam.reviewerId,
+          reviewerName: reviewerName !== undefined ? (reviewerName || null) : exam.reviewerName,
+          reviewStatus: exam.reviewStatus,
+          reviewNote: reviewNote !== undefined ? (reviewNote || null) : exam.reviewNote,
+          registeredBy: registeredById !== undefined ? registeredById : exam.registeredBy,
+          registeredByName: registeredByName !== undefined ? registeredByName : exam.registeredByName,
+          registeredStoreId: exam.registeredStoreId,
+          registeredStoreName: exam.registeredStoreName,
+          registeredDeviceId: exam.registeredDeviceId,
+          registeredAt: registeredAt ? new Date(registeredAt) : exam.registeredAt,
+          revisesExamId: exam.id,
+          discardedAt: null,
+        },
+      }),
+    ]);
+    return created;
   });
 
   // ---- payment + recharge (use shared services) ----

@@ -25,8 +25,8 @@ export default function Recycle() {
                   <td>{e.deletedByName}</td>
                   <td>{e.sourceStoreName || '—'}</td>
                   <td>
-                    <Button size="sm" variant="ghost" onClick={() => { if (confirm('恢复此记录？')) api.restoreRecycle(e.id).then(load); }}>恢复</Button>
-                    <Button size="sm" variant="ghost" onClick={() => { if (confirm('永久删除？此操作不可撤销')) api.deleteRecycle(e.id).then(load); }}>永久删除</Button>
+                    <Button size="sm" variant="ghost" onClick={() => { if (confirm('恢复此记录？')) api.restoreRecycle(e.id).then(load).catch((e: any) => alert(e.message || '恢复失败')); }}>恢复</Button>
+                    <Button size="sm" variant="ghost" onClick={() => { if (confirm('永久删除？此操作不可撤销')) api.deleteRecycle(e.id).then(load).catch((e: any) => alert(e.message || '删除失败')); }}>永久删除</Button>
                   </td>
                 </tr>
               ))}

@@ -15,7 +15,10 @@
     "esModuleInterop": true,
     "allowSyntheticDefaultImports": true,
     "baseUrl": ".",
-    "paths": { "@/*": ["src/*"] }
+    "paths": {
+      "@/*": ["src/*"],
+      "@clinic/shared/constants": ["../shared/src/constants.ts"]
+    }
   },
   "include": ["src", "electron"]
 }

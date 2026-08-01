@@ -1,8 +1,14 @@
 // 会员详情 (§5.1): full info + 累计积分/豆 clear separation + exam history (cross-store) + ledger edit + 代付 usage.
+// §password-flow: "编辑信息" modal edits all customer fields (name/phone/address/birthday).
+//      Changing the phone requires the CHANGE password (verified inline by the server/Electron
+//      handler in the same request as the write — same pattern as 修改检查单). Mirrors the
+//      admin web MemberDetail so both surfaces edit identically.
+// §2.4: exam history shows ALL records including discarded revisions (grey "已废弃" tag).
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { api } from '../api';
-import { Card, Button, Badge, Modal, Field, Input, Select, TextArea, EmptyState, fmtDate, fmtDateTime, fmtCents } from '../components/ui';
+import { Card, Button, Badge, Modal, Field, Input, Select, TextArea, EmptyState, fmtDate, fmtDateTime, fmtCents, parseYuanToCents } from '../components/ui';
+import { PhoneInput, isPhoneValid } from '../components/PhoneInput';
 
 const LEDGER_FIELDS = [
   { value: 'BALANCE', label: '卡内余额（元，正=充值，负=扣减）' },
@@ -15,8 +21,10 @@ export default function MemberDetail() {
   const nav = useNavigate();
   const [data, setData] = useState<any>(null);
   const [showAdj, setShowAdj] = useState(false);
+  const [showEdit, setShowEdit] = useState(false);
   const [staff, setStaff] = useState<any[]>([]);
   const [adj, setAdj] = useState({ field: 'BALANCE', delta: '', reason: '', operatorId: '', cashReceivedYuan: '' });
+  const [edit, setEdit] = useState({ name: '', phone: '', address: '', birthday: '', changePassword: '', reason: '' });
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
 
@@ -24,6 +32,12 @@ export default function MemberDetail() {
     if (!id) return;
     const r = await api.getMember(id);
     setData(r);
+    setEdit({
+      name: r.customer?.name || '', phone: r.customer?.phone || '',
+      address: r.customer?.address || '',
+      birthday: r.customer?.birthday ? new Date(r.customer.birthday).toISOString().slice(0, 10) : '',
+      changePassword: '', reason: '',
+    });
   }
   useEffect(() => { load(); api.getStaff().then((s: any) => setStaff(s || [])); /* eslint-disable-next-line */ }, [id]);
 
@@ -34,7 +48,7 @@ export default function MemberDetail() {
     setBusy(true);
     try {
       const op = staff.find((s) => s.id === adj.operatorId);
-      const cents = adj.field === 'BALANCE' ? Math.round(parseFloat(adj.delta) * 100) : parseInt(adj.delta, 10);
+      const cents = adj.field === 'BALANCE' ? parseYuanToCents(adj.delta) : parseInt(adj.delta, 10);
       await api.adjustLedger(id!, {
         field: adj.field, delta: cents, reason: adj.reason,
         operatorId: adj.operatorId, operatorName: op?.name || '',
@@ -45,6 +59,32 @@ export default function MemberDetail() {
       await load();
     } catch (e: any) {
       setErr(e.message || '调整失败');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // §password-flow: submit name/phone/address/birthday together with the change
+  // password. The server (HTTP) / Electron handler verifies the password inline
+  // when the phone changes — not a separate pre-verify step.
+  async function submitEdit() {
+    setErr('');
+    if (edit.phone && !isPhoneValid(edit.phone)) { setErr('手机号格式错误（需11位、第一位为1）'); return; }
+    if (edit.phone !== data.customer?.phone && !edit.changePassword) {
+      setErr('修改手机号需要先输入敏感信息修改密码'); return;
+    }
+    setBusy(true);
+    try {
+      const op = staff.find((s) => s.id === adj.operatorId);
+      await api.updateMember(id!, {
+        name: edit.name, phone: edit.phone, address: edit.address, birthday: edit.birthday || undefined,
+        changePassword: edit.changePassword || undefined, reason: edit.reason || '前台修改会员信息',
+        operatorId: adj.operatorId || undefined, operatorName: op?.name || '前台',
+      });
+      setShowEdit(false);
+      await load();
+    } catch (e: any) {
+      setErr(e.message || '修改失败');
     } finally {
       setBusy(false);
     }
@@ -71,6 +111,7 @@ export default function MemberDetail() {
         extra={
           <div className="flex gap-2">
             <Button variant="ghost" onClick={() => nav('/member')}>返回列表</Button>
+            <Button variant="ghost" onClick={() => setShowEdit(true)}>编辑信息</Button>
             <Button onClick={() => setShowAdj(true)}>调整余额/豆/积分</Button>
           </div>
         }
@@ -111,12 +152,12 @@ export default function MemberDetail() {
             </thead>
             <tbody>
               {exams.map((e: any) => (
-                <tr key={e.id} className="border-b border-slate-100 hover:bg-slate-50 cursor-pointer" onClick={() => nav(`/exam/${e.id}`)}>
+                <tr key={e.id} className={`border-b border-slate-100 hover:bg-slate-50 cursor-pointer ${e.discardedAt ? 'opacity-60' : ''}`} onClick={() => nav(`/exam/${e.id}`)}>
                   <td className="py-2">{fmtDateTime(e.registeredAt)}</td>
                   <td>{e.dept === 'OPTICAL' ? '配镜部' : '眼科部'}</td>
                   <td>{fmtCents(e.baseAmount)} 元</td>
                   <td>{fmtDate(e.reviewDate)}</td>
-                  <td><Badge tone={e.reviewStatus === 'REVIEWED' ? 'green' : e.reviewStatus === 'PENDING' ? 'amber' : 'slate'}>{statusLabel(e.reviewStatus)}</Badge></td>
+                  <td>{e.discardedAt ? <Badge tone="slate">已废弃</Badge> : <Badge tone={e.reviewStatus === 'REVIEWED' ? 'green' : e.reviewStatus === 'PENDING' ? 'amber' : 'slate'}>{statusLabel(e.reviewStatus)}</Badge>}</td>
                   <td>{e.registeredStoreName}</td>
                   <td className="text-brand-600">查看 →</td>
                 </tr>
@@ -201,6 +242,31 @@ export default function MemberDetail() {
               {staff.map((s) => <option key={s.id} value={s.id}>{s.name} ({s.code})</option>)}
             </Select>
           </Field>
+          {err && <div className="rounded-md bg-rose-50 px-3 py-2 text-sm text-rose-700">{err}</div>}
+        </div>
+      </Modal>
+
+      {/* §password-flow: 编辑客户信息（修改手机号需敏感信息修改密码，同次提交校验） */}
+      <Modal open={showEdit} onClose={() => setShowEdit(false)} title="编辑客户信息（修改手机号需敏感信息修改密码）"
+        footer={<><Button variant="ghost" onClick={() => setShowEdit(false)}>取消</Button><Button disabled={busy} onClick={submitEdit}>{busy ? '提交中…' : '提交'}</Button></>}>
+        <div className="space-y-3">
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="姓名"><Input value={edit.name} onChange={(e) => setEdit((s) => ({ ...s, name: e.target.value }))} /></Field>
+            <Field label="手机号（修改需填下方密码）">
+              <PhoneInput value={edit.phone} onChange={(e) => setEdit((s) => ({ ...s, phone: e.target.value }))} />
+            </Field>
+            <Field label="生日"><Input type="date" value={edit.birthday} onChange={(e) => setEdit((s) => ({ ...s, birthday: e.target.value }))} /></Field>
+            <Field label="住址"><Input value={edit.address} onChange={(e) => setEdit((s) => ({ ...s, address: e.target.value }))} /></Field>
+          </div>
+          {edit.phone !== data.customer?.phone && (
+            <div className="rounded-md bg-amber-50 p-3 text-xs text-amber-700">
+              您正在修改手机号，旧号将自动写入曾用手机号历史。
+            </div>
+          )}
+          <Field label="敏感信息修改密码（仅修改手机号时需要）" hint="密码不在前端明文展示，向服务器验证">
+            <Input type="password" value={edit.changePassword} onChange={(e) => setEdit((s) => ({ ...s, changePassword: e.target.value }))} />
+          </Field>
+          <Field label="修改原因"><TextArea rows={2} value={edit.reason} onChange={(e) => setEdit((s) => ({ ...s, reason: e.target.value }))} /></Field>
           {err && <div className="rounded-md bg-rose-50 px-3 py-2 text-sm text-rose-700">{err}</div>}
         </div>
       </Modal>
