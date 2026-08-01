@@ -12,3 +12,4 @@ export * from './sync-applier.js';
 export { runSeed } from './seed.js';
 export * from './db-helpers.js';
 export * from './payment-service.js';
+export * from './exam-service.js';

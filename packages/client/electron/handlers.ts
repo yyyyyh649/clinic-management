@@ -8,11 +8,12 @@ import { getDeviceIdentity, saveDeviceIdentity, getServerUrl, setServerUrl as sa
 import { syncOnce, getSyncStatus, onSyncStatus } from './sync.js';
 import {
   PrismaClient, executePayment, executeRecharge, PaymentError, loadMemberDetail, loadBalances,
+  createExam as createExamSvc, getExamDetail, listExams, voidExam,
+  updateReviewStatus, updateExam as updateExamSvc, ExamError,
   type DeviceIdentity,
   computeTier, computeAge, memberDaysSince, isPendingReview, reviewDaysRemaining, computeBatchExpiry,
   type BeanExpirySetting,
-  LEDGER_FIELD, LEDGER_SOURCE, DISCOUNT_TYPE, BEAN_REDEEM_MULTIPLE, DEPT, DEFAULT_REVIEW_DAYS, REVIEW_STATUS,
-  parseYuanToCents,
+  LEDGER_FIELD, LEDGER_SOURCE, DISCOUNT_TYPE, BEAN_REDEEM_MULTIPLE, DEPT, parseYuanToCents,
 } from '@clinic/shared';
 
 function p() { return getPrisma(); }
@@ -239,76 +240,36 @@ export function registerHandlers(getWin: () => BrowserWindow | null) {
     return { ok: true };
   });
 
-  // ---- exams ----
+  // ---- exams (use shared exam-service: same create/detail/list/void/review/
+  //      update logic as the server, eliminating the copy-paste that previously
+  //      caused "补丁没打全" bugs. Store/device fields are stamped from the
+  //      device identity before calling the shared function.) ----
   ipcMain.handle('clinic:createExam', async (_e, input: any) => {
-    const { customerId, name, phone, address, birthday, dept, templateId, templateName, content, lensBrand, lensPrice, frameBrand, framePrice, totalAmount, reviewDate, reviewerId, reviewerName, reviewNote, registeredById, registeredByName, registeredAt } = input || {};
-    if (!name || !phone || !dept || !registeredById) throw new Error('姓名、手机号、部门、登记人必填');
-    if (dept === DEPT.OPTICAL && (lensPrice == null || framePrice == null)) throw new Error('配镜部镜片和镜架价格必填');
-    if (dept === DEPT.EYE && totalAmount == null) throw new Error('眼科部总金额必填');
     const dev = stamp(input);
-    let customer = customerId ? await p().customer.findUnique({ where: { id: customerId } }) : null;
-    if (!customer) {
-      const existing = await p().customer.findFirst({ where: { phone, name } });
-      customer = existing ?? await p().customer.create({ data: { id: uuid(), name, phone, birthday: birthday ? new Date(birthday) : null, address, createdByStaffId: registeredById, createdByStoreId: dev.storeId, createdByDeviceId: dev.deviceId } });
-    }
-    const baseAmount = dept === DEPT.OPTICAL ? (Number(lensPrice) || 0) + (Number(framePrice) || 0) : (Number(totalAmount) || 0);
-    const review = reviewDate ? new Date(reviewDate) : new Date(Date.now() + DEFAULT_REVIEW_DAYS * 86400000);
-    // 登记时间可自定义（默认当前时间）；允许补录历史登记。
-    const regAt = registeredAt ? new Date(registeredAt) : new Date();
-    const exam = await p().examRecord.create({ data: { id: uuid(), customerId: customer.id, dept, templateId: templateId || null, templateName: templateName || null, content: content ? JSON.stringify(content) : null, lensBrand: lensBrand || null, lensPrice: dept === DEPT.OPTICAL ? Number(lensPrice) : null, frameBrand: frameBrand || null, framePrice: dept === DEPT.OPTICAL ? Number(framePrice) : null, totalAmount: dept === DEPT.EYE ? Number(totalAmount) : null, baseAmount, reviewDate: review, reviewerId: reviewerId || null, reviewerName: reviewerName || null, reviewStatus: 'PENDING', reviewNote: reviewNote || null, registeredBy: registeredById, registeredByName: registeredByName || '', registeredStoreId: dev.storeId, registeredStoreName: dev.storeName, registeredDeviceId: dev.deviceId, registeredAt: regAt } });
-    return exam;
+    return createExamSvc(p(), {
+      ...input,
+      registeredStoreId: dev.storeId,
+      registeredStoreName: dev.storeName,
+      registeredDeviceId: dev.deviceId,
+    });
   });
 
-  ipcMain.handle('clinic:getExam', async (_e, id: string) => {
-    const exam = await p().examRecord.findUnique({ where: { id }, include: { customer: { include: { member: true } }, payment: true } });
-    if (!exam) throw new Error('检查记录不存在');
-    // B.6: history excludes voided unpaid drafts. §2.4: KEEPS discarded revisions.
-    const history = await p().examRecord.findMany({ where: { customerId: exam.customerId, deletedAt: null, voidedAt: null, id: { not: exam.id } }, orderBy: { registeredAt: 'desc' } });
-    // §2.4: if this record was superseded, find the newer revision for the banner link.
-    let revisedBy: { id: string; createdAt: Date } | null = null;
-    if (exam.discardedAt) {
-      const newer = await p().examRecord.findFirst({ where: { revisesExamId: exam.id }, select: { id: true, createdAt: true } });
-      if (newer) revisedBy = newer;
-    }
-    return { exam: { ...exam, content: exam.content ? JSON.parse(exam.content) : [] }, customer: exam.customer, history, age: computeAge(exam.customer?.birthday), revisedBy };
-  });
+  ipcMain.handle('clinic:getExam', async (_e, id: string) => getExamDetail(p(), id));
 
   ipcMain.handle('clinic:listExams', async (_e, filters: any) => {
     const { dept, storeId, status, include } = filters || {};
     const daysToReview = filters.daysToReview ? Number(filters.daysToReview) : undefined;
-    const where: any = { deletedAt: null, voidedAt: null };
-    // §2.4: hide discarded revisions unless explicitly requested.
-    if (include !== 'discarded') where.discardedAt = null;
-    if (dept) where.dept = dept;
-    if (storeId) where.registeredStoreId = storeId;
-    if (status) where.reviewStatus = status;
-    // B.6: default only PAID exams; include=unpaid shows the 待支付 drafts.
-    // When showing discarded revisions, don't enforce the payment filter.
-    if (include !== 'unpaid' && include !== 'discarded') where.payment = { isNot: null };
-    const exams = await p().examRecord.findMany({ where, include: { customer: true, payment: true }, orderBy: { registeredAt: 'desc' } });
-    const now = new Date();
-    let rows = exams.map((e) => ({ id: e.id, dept: e.dept, deptLabel: e.dept === DEPT.OPTICAL ? '配镜部' : '眼科部', customerName: e.customer?.name, phone: e.customer?.phone, age: computeAge(e.customer?.birthday), registeredBy: e.registeredByName, registeredAt: e.registeredAt, registeredStoreName: e.registeredStoreName, registeredStoreId: e.registeredStoreId, reviewDate: e.reviewDate, reviewStatus: e.reviewStatus, daysToReview: reviewDaysRemaining(e.reviewDate, now), needsReview: isPendingReview(e as any, now), lensBrand: e.lensBrand, frameBrand: e.frameBrand, baseAmount: e.baseAmount, hasPayment: !!e.payment, discardedAt: e.discardedAt, revisesExamId: e.revisesExamId }));
-    if (daysToReview !== undefined) rows = rows.filter((r) => r.daysToReview !== null && r.daysToReview <= daysToReview);
-    const rank = (r: any) => (r.reviewStatus === REVIEW_STATUS.CONTACTED_NO_SHOW ? 2 : r.needsReview ? 0 : 1);
-    rows.sort((a, b) => { const ra = rank(a), rb = rank(b); if (ra !== rb) return ra - rb; return new Date(b.registeredAt).getTime() - new Date(a.registeredAt).getTime(); });
-    return { items: rows };
+    const ageMin = filters.ageMin ? Number(filters.ageMin) : undefined;
+    const ageMax = filters.ageMax ? Number(filters.ageMax) : undefined;
+    return listExams(p(), { dept, storeId, status, include, daysToReview, ageMin, ageMax });
   });
 
   // B.6: void an unpaid draft (sets voidedAt; only allowed when no payment exists).
-  ipcMain.handle('clinic:voidExam', async (_e, id: string) => {
-    const exam = await p().examRecord.findUnique({ where: { id }, include: { payment: true } });
-    if (!exam) throw new Error('检查记录不存在');
-    if (exam.voidedAt) throw new Error('该记录已作废');
-    if (exam.payment) throw new Error('已支付的记录不能作废，如需删除请走回收站');
-    await p().examRecord.update({ where: { id }, data: { voidedAt: new Date() } });
-    return { ok: true };
-  });
+  ipcMain.handle('clinic:voidExam', async (_e, id: string) => voidExam(p(), id));
 
-  ipcMain.handle('clinic:updateReview', async (_e, { id, input }: any) => {
-    const { reviewStatus, reviewerId, reviewerName, reviewNote } = input || {};
-    if (!reviewStatus || !['PENDING', 'CONTACTED', 'CONTACTED_NO_SHOW', 'REVIEWED'].includes(reviewStatus)) throw new Error('无效复查状态');
-    return p().examRecord.update({ where: { id }, data: { reviewStatus, reviewerId, reviewerName, reviewNote } });
-  });
+  ipcMain.handle('clinic:updateReview', async (_e, { id, input }: any) =>
+    updateReviewStatus(p(), id, input || {}),
+  );
 
   // 敏感操作二次确认：校验 CHANGE 密码（向服务器验证，Password 表不下发到客户端）。
   // 离线时无法验证 -> 编辑历史检查单必须在线（与后台登录一致的前提）。
@@ -327,62 +288,13 @@ export function registerHandlers(getWin: () => BrowserWindow | null) {
   });
 
   // 修改检查单（版本化保留 §2.2 + 密码同次校验 §password-flow）：
-  // 不覆盖旧记录，而是标记旧记录 discardedAt + 新建一条修正版（revisesExamId 指向旧记录）。
-  // 旧记录上的 Payment 不动（历史收款不可改写）。新记录初始未支付，如涉及金额变化走"继续支付"。
-  // 密码随提交一起校验（向服务器验证，与 HTTP 路径的 server route 一致），不是单独的预校验。
+  // 密码先向服务器验证（与 HTTP 路径的 server route 一致），验证通过后调
+  // shared updateExam 做 discard-old + create-new 写入。写入逻辑只有一份实现。
   ipcMain.handle('clinic:updateExam', async (_e, { id, input }: any) => {
-    const exam = await p().examRecord.findUnique({ where: { id } });
-    if (!exam) throw new Error('检查记录不存在');
-    const { changePassword: cp } = input || {};
+    const { changePassword: cp, ...rest } = input || {};
     const ok = await verifyChangePasswordOnline(cp || '');
     if (!ok) throw new Error('修改检查单需要敏感信息修改密码验证通过');
-    const {
-      dept, templateId, templateName, content,
-      lensBrand, lensPrice, frameBrand, framePrice, totalAmount,
-      reviewDate, reviewerId, reviewerName, reviewNote,
-      registeredById, registeredByName, registeredAt,
-    } = input || {};
-    const d = dept || exam.dept;
-    const baseAmount = d === DEPT.OPTICAL
-      ? (Number(lensPrice ?? exam.lensPrice) || 0) + (Number(framePrice ?? exam.framePrice) || 0)
-      : (Number(totalAmount ?? exam.totalAmount) || 0);
-    const newId = uuid();
-    const now = new Date();
-    // 1. Mark old record discarded. 2. Create revision with modified values.
-    // Immutable associations (customerId/store/device) carry over from old.
-    const [/* _old */, created] = await p().$transaction([
-      p().examRecord.update({ where: { id: exam.id }, data: { discardedAt: now } }),
-      p().examRecord.create({
-        data: {
-          id: newId,
-          customerId: exam.customerId,
-          dept: d,
-          templateId: templateId !== undefined ? (templateId || null) : exam.templateId,
-          templateName: templateName !== undefined ? (templateName || null) : exam.templateName,
-          content: content !== undefined ? (content ? JSON.stringify(content) : null) : exam.content,
-          lensBrand: lensBrand !== undefined ? (lensBrand || null) : exam.lensBrand,
-          lensPrice: lensPrice !== undefined ? (d === DEPT.OPTICAL ? Number(lensPrice) : null) : exam.lensPrice,
-          frameBrand: frameBrand !== undefined ? (frameBrand || null) : exam.frameBrand,
-          framePrice: framePrice !== undefined ? (d === DEPT.OPTICAL ? Number(framePrice) : null) : exam.framePrice,
-          totalAmount: totalAmount !== undefined ? (d === DEPT.EYE ? Number(totalAmount) : null) : exam.totalAmount,
-          baseAmount,
-          reviewDate: reviewDate !== undefined ? new Date(reviewDate) : exam.reviewDate,
-          reviewerId: reviewerId !== undefined ? (reviewerId || null) : exam.reviewerId,
-          reviewerName: reviewerName !== undefined ? (reviewerName || null) : exam.reviewerName,
-          reviewStatus: exam.reviewStatus,
-          reviewNote: reviewNote !== undefined ? (reviewNote || null) : exam.reviewNote,
-          registeredBy: registeredById !== undefined ? registeredById : exam.registeredBy,
-          registeredByName: registeredByName !== undefined ? registeredByName : exam.registeredByName,
-          registeredStoreId: exam.registeredStoreId,
-          registeredStoreName: exam.registeredStoreName,
-          registeredDeviceId: exam.registeredDeviceId,
-          registeredAt: registeredAt ? new Date(registeredAt) : exam.registeredAt,
-          revisesExamId: exam.id,
-          discardedAt: null,
-        },
-      }),
-    ]);
-    return created;
+    return updateExamSvc(p(), id, rest);
   });
 
   // ---- payment + recharge (use shared services) ----
