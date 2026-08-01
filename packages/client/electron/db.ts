@@ -30,6 +30,20 @@ async function applySchema() {
   }
 }
 
+// Migrate existing DB: add columns that were introduced after initial release.
+// SQLite's ALTER TABLE ADD COLUMN is idempotent-safe via try/catch (errors if column exists).
+// Each migration is a single ADD COLUMN; wrap individually so one failure doesn't block others.
+async function runMigrations() {
+  if (!prisma) throw new Error('prisma not initialized');
+  const migrations: string[] = [
+    // voidedAt added to ExamRecord for B.6 (void unpaid drafts)
+    'ALTER TABLE "ExamRecord" ADD COLUMN "voidedAt" DATETIME',
+  ];
+  for (const sql of migrations) {
+    try { await prisma!.$executeRawUnsafe(sql); } catch { /* column already exists */ }
+  }
+}
+
 export async function initLocalDb(): Promise<PrismaClient> {
   const userData = app.getPath('userData');
   const dbPath = path.join(userData, 'client.db');
@@ -40,6 +54,9 @@ export async function initLocalDb(): Promise<PrismaClient> {
   if (isNew) {
     await applySchema();
   }
+  // Always run migrations: harmless on new DBs (columns already exist),
+  // and adds missing columns on existing DBs from older app versions.
+  await runMigrations();
 
   // Seed config if empty (so the device has stores/staff/tiers/templates/brands offline).
   const storeCount = await prisma.store.count().catch(async (e) => {

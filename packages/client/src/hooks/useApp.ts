@@ -68,9 +68,8 @@ export function useReminders() {
   const [r, setR] = useState<Reminders>({ birthdayToday: 0, reviewDue: 0 });
   useEffect(() => {
     let cancelled = false;
-    (async () => {
+    const compute = async () => {
       try {
-        // Cheap counts via listMembers / listExams endpoints (front-desk open).
         const [members, exams] = await Promise.all([
           api.listMembers({}).catch(() => ({ items: [] })),
           api.listExams({}).catch(() => ({ items: [] })),
@@ -84,8 +83,9 @@ export function useReminders() {
         const reviewDue = (exams.items || []).filter((e: any) => e.needsReview).length;
         if (!cancelled) setR({ birthdayToday, reviewDue });
       } catch { /* ignore */ }
-    })();
-    const t = setInterval(() => { /* recompute periodically */ }, 60000);
+    };
+    compute();
+    const t = setInterval(compute, 60000);
     return () => { cancelled = true; clearInterval(t); };
   }, []);
   return r;
