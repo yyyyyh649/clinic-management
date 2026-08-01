@@ -97,7 +97,9 @@ export default function Payment() {
 
   // Card balance / beans (for display + overage detection).
   const cardBalanceCents = payForMember?.balances?.balanceCents ?? 0;
-  const cardBeans = payForMember?.balances?.beans ?? 0;
+  // 豆显示/校验必须用 spendableBeans（已扣除过期批次），而非 balances.beans（原始累计）。
+  // 否则一旦启用豆有效期且有豆已过期，前台会显示/允许输入实际不可用的豆数。
+  const cardBeans = payForMember?.balances?.spendableBeans ?? 0;
   const cardPoints = payForMember?.balances?.points ?? 0;
   const balanceOverage = useCard && balanceDeductCents > cardBalanceCents;
   const beansOverage = useCard && beansDeductCount > cardBeans;

@@ -1,8 +1,9 @@
 // DB-accessing helpers shared by server + client. Take a PrismaClient instance.
 import type { PrismaClient } from '../generated/client';
 import { computeBalances, sumLedger } from './logic/ledger.js';
+import { dueForExpiry } from './logic/beans.js';
 import { computeTier } from './logic/tier.js';
-import { LEDGER_FIELD, formatDateTime } from './constants.js';
+import { LEDGER_FIELD, LEDGER_SOURCE, formatDateTime } from './constants.js';
 
 export async function loadBalances(prisma: PrismaClient, memberId: string, now: Date = new Date()) {
   const [ledgers, batches] = await Promise.all([
@@ -10,6 +11,69 @@ export async function loadBalances(prisma: PrismaClient, memberId: string, now: 
     prisma.beanBatch.findMany({ where: { memberId } }),
   ]);
   return computeBalances(ledgers as any, batches as any, now);
+}
+
+// Bean expiry sweep: find batches past their expiry date with remaining > 0
+// and not yet flagged, then for each:
+//   1. create an EXPIRE Ledger row (delta = -remaining) so the append-only
+//      ledger reflects the write-down and 累计豆 converges with 可花豆,
+//   2. set BeanBatch.expired = true so it stops being selected by FIFO/spendable.
+//
+// The Ledger id is derived deterministically from the batch id
+// (`bean-expire-<batchId>`) so the append-only dedup (INSERT OR IGNORE by id)
+// makes this idempotent: running it on both server and client, or re-running
+// on boot, never creates duplicate EXPIRE ledgers.
+//
+// Call sites: server initDb() on boot, client initLocalDb() on boot. The
+// beanExpiry *setting* is not needed here — expiry is per-batch (expiresAt
+// already stamped at award time), so a disabled global setting simply means
+// no batch has an expiresAt and dueForExpiry returns empty.
+export async function expireDueBeanBatches(prisma: PrismaClient, now: Date = new Date(), origin: 'SERVER' | 'CLIENT' = 'SERVER'): Promise<number> {
+  const batches = await prisma.beanBatch.findMany({ where: { expired: false } });
+  const due = dueForExpiry(batches as any, now);
+  if (due.length === 0) return 0;
+
+  let expiredCount = 0;
+  for (const b of due) {
+    const ledgerId = `bean-expire-${b.id}`;
+    // Idempotent: skip if the EXPIRE ledger already exists.
+    const exists = await prisma.ledger.findUnique({ where: { id: ledgerId } }).catch(() => null);
+    if (exists) {
+      // Ledger already written but batch flag not set (partial prior run) — just flag it.
+      await prisma.beanBatch.update({ where: { id: b.id }, data: { expired: true } }).catch(() => {});
+      expiredCount++;
+      continue;
+    }
+    try {
+      await prisma.$transaction(async (tx) => {
+        await tx.ledger.create({
+          data: {
+            id: ledgerId,
+            memberId: b.memberId,
+            field: LEDGER_FIELD.BEANS,
+            delta: -b.remaining,
+            source: LEDGER_SOURCE.EXPIRE,
+            reason: `豆到期核销（批次 ${b.id}，剩余 ${b.remaining} 豆）`,
+            refType: 'EXPIRE',
+            refId: b.id,
+            beanBatchId: b.id,
+            operatorId: 'SYSTEM',
+            operatorName: '系统核销',
+            storeId: '',
+            storeName: '',
+            deviceId: '',
+            syncStatus: 'PENDING',
+            origin,
+          },
+        });
+        await tx.beanBatch.update({ where: { id: b.id }, data: { expired: true } });
+      });
+      expiredCount++;
+    } catch {
+      // race / constraint — skip; next run will retry.
+    }
+  }
+  return expiredCount;
 }
 
 export async function loadMemberDetail(prisma: PrismaClient, memberId: string) {

@@ -6,6 +6,7 @@ import {
   LEDGER_FIELD, LEDGER_SOURCE, DISCOUNT_TYPE, BEAN_REDEEM_MULTIPLE, formatCents,
 } from './constants.js';
 import { computeBatchExpiry, selectFIFOConsume, type BeanExpirySetting } from './logic/beans.js';
+import { recomputeBatchesFromLedger } from './logic/ledger.js';
 
 export interface PaymentInput {
   examId: string;
@@ -134,7 +135,11 @@ export async function executePayment(prisma: PrismaClient, input: PaymentInput):
     // b. beans consume (FIFO)
     if (input.beansDeductCount > 0 && sourceMemberId) {
       const batches = await tx.beanBatch.findMany({ where: { memberId: sourceMemberId } });
-      const plan = selectFIFOConsume(batches as any, input.beansDeductCount);
+      // Rebuild remaining from the append-only Ledger so that LWW sync merge
+      // drift on the stored counter can't let FIFO pick an already-drained batch.
+      const beanLedgers = await tx.ledger.findMany({ where: { memberId: sourceMemberId, field: LEDGER_FIELD.BEANS } });
+      const reconciledBatches = recomputeBatchesFromLedger(batches as any, beanLedgers as any);
+      const plan = selectFIFOConsume(reconciledBatches, input.beansDeductCount);
       let left = input.beansDeductCount;
       for (const p of plan) {
         const take = Math.min(left, p.consume);

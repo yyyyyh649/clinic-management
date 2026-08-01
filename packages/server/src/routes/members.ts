@@ -88,7 +88,7 @@ memberRouter.get('/', async (req, res) => {
       id: m.id, cardNo: m.cardNo, name: m.customer?.name, phone: m.customer?.phone,
       birthday: m.customer?.birthday, age,
       tierName: tier.name, tierLevel: tier.level,
-      points: bal.points, beans: bal.beans, balanceCents: bal.balanceCents,
+      points: bal.points, beans: bal.spendableBeans, balanceCents: bal.balanceCents,
       registeredAt: m.registeredAt, daysSince: memberDaysSince(m.registeredAt, now),
       registeredBy: m.registeredByName, registeredStoreName: m.registeredStoreName,
       registeredStoreId: m.registeredStoreId,

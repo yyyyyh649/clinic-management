@@ -4,7 +4,7 @@ import { app } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { PrismaClient, runSeed } from '@clinic/shared';
+import { PrismaClient, runSeed, expireDueBeanBatches } from '@clinic/shared';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -67,5 +67,8 @@ export async function initLocalDb(): Promise<PrismaClient> {
   if (storeCount === 0) {
     await runSeed(prisma);
   }
+  // Bean expiry sweep (idempotent):核销已过期批次，写 EXPIRE ledger + 置 expired。
+  // 与服务器启动一致；ledger id 派生自 batchId，append-only 去重，两端都跑不会重复。
+  await expireDueBeanBatches(prisma, new Date(), 'CLIENT').catch(() => {});
   return prisma;
 }

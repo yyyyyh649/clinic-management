@@ -99,7 +99,7 @@ export default function MemberRegister() {
             <Row label="会员卡号" value={result.member?.cardNo} />
             <Row label="档位" value={result.tier?.name} />
             <Row label="累计积分" value={`${result.balances?.points ?? 0} 分`} />
-            <Row label="卡内豆" value={`${result.balances?.beans ?? 0} 豆`} />
+            <Row label="卡内豆" value={`${result.balances?.spendableBeans ?? 0} 豆`} />
             <Row label="卡内余额" value={`${fmtCents(result.balances?.balanceCents)} 元`} />
           </div>
           <div className="mt-4 flex gap-2">

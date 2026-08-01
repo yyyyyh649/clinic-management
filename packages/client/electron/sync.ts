@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import { getPrisma } from './db.js';
 import { getServerUrl, getDeviceIdentity } from './device.js';
 import {
-  applySyncRecords, makeSyncRecord, SYNC_TABLES,
+  applySyncRecords, makeSyncRecord, SYNC_TABLES, expireDueBeanBatches,
 } from '@clinic/shared';
 import type { SyncRecord, SyncTableName } from '@clinic/shared';
 
@@ -120,6 +120,10 @@ async function pullOnce(): Promise<number> {
   if (!res.ok) throw new Error(`pull failed: ${res.status}`);
   const body = (await res.json()) as { records?: any[]; cursors?: Record<string, string> };
   await applySyncRecords(prisma, body.records || []);
+  // Bean expiry sweep after pull: newly synced batches may be past their expiresAt.
+  // Idempotent (deterministic ledger id); creates local EXPIRE ledgers that will
+  // push back to the server (dedup by id keeps it safe).
+  await expireDueBeanBatches(prisma, new Date(), 'CLIENT').catch(() => {});
   state.pullCursors = { ...state.pullCursors, ...(body.cursors || {}) };
   return (body.records || []).length;
 }

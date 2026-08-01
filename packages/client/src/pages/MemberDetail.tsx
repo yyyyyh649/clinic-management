@@ -86,7 +86,7 @@ export default function MemberDetail() {
           <Block title="档位与积分（清晰分开）" tone="blue">
             <Row label="档位" value={<Badge tone="blue">{tier?.name}</Badge>} />
             <Row label="累计积分（决定档位）" value={<span className="font-semibold text-brand-700">{balances?.points ?? 0} 分</span>} />
-            <Row label="豆（可花）" value={<span className="font-semibold text-emerald-700">{balances?.beans ?? 0} 豆</span>} />
+            <Row label="豆（可花）" value={<span className="font-semibold text-emerald-700">{balances?.spendableBeans ?? 0} 豆</span>} />
             <Row label="卡内余额" value={<span className="font-semibold text-ink-900">{fmtCents(balances?.balanceCents)} 元</span>} />
             <Row label="成为会员" value={`${fmtDate(member?.registeredAt)} · ${Math.floor((Date.now() - new Date(member?.registeredAt).getTime()) / 86400000)}天`} />
           </Block>

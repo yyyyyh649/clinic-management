@@ -151,7 +151,7 @@ export function registerHandlers(getWin: () => BrowserWindow | null) {
       const bal = await loadBalances(p(), m.id, now);
       const tier = computeTier(bal.points, tiers as any);
       const dueExam = await p().examRecord.findFirst({ where: { customerId: m.customerId, deletedAt: null, voidedAt: null, reviewStatus: { in: ['PENDING', 'CONTACTED'] }, reviewDate: { lte: new Date(now.getTime() + 7 * 86400000) } } });
-      return { id: m.id, cardNo: m.cardNo, name: m.customer?.name, phone: m.customer?.phone, birthday: m.customer?.birthday, age: computeAge(m.customer?.birthday), tierName: tier.name, tierLevel: tier.level, points: bal.points, beans: bal.beans, balanceCents: bal.balanceCents, registeredAt: m.registeredAt, daysSince: memberDaysSince(m.registeredAt, now), registeredBy: m.registeredByName, registeredStoreName: m.registeredStoreName, registeredStoreId: m.registeredStoreId, pendingReview: !!dueExam };
+      return { id: m.id, cardNo: m.cardNo, name: m.customer?.name, phone: m.customer?.phone, birthday: m.customer?.birthday, age: computeAge(m.customer?.birthday), tierName: tier.name, tierLevel: tier.level, points: bal.points, beans: bal.spendableBeans, balanceCents: bal.balanceCents, registeredAt: m.registeredAt, daysSince: memberDaysSince(m.registeredAt, now), registeredBy: m.registeredByName, registeredStoreName: m.registeredStoreName, registeredStoreId: m.registeredStoreId, pendingReview: !!dueExam };
     }));
     if (tierLevel) rows = rows.filter((r) => r.tierLevel === Number(tierLevel));
     if (ageMin !== undefined) rows = rows.filter((r) => (r.age ?? -1) >= ageMin);
@@ -179,8 +179,12 @@ export function registerHandlers(getWin: () => BrowserWindow | null) {
         await tx.beanBatch.create({ data: { id: batchId, memberId, remaining: Number(delta), total: Number(delta), expiresAt: computeBatchExpiry(new Date(), setting), source: 'AWARD', refId: id } });
       } else if (field === LEDGER_FIELD.BEANS && Number(delta) < 0) {
         const batches = await tx.beanBatch.findMany({ where: { memberId } });
-        const { selectFIFOConsume } = await import('@clinic/shared');
-        const plan = selectFIFOConsume(batches as any, Math.abs(Number(delta)));
+        // 用 Ledger 重算 batch.remaining，防止 LWW 同步合并导致存储值虚高、
+        // FIFO 选中实际已耗尽的批次。
+        const beanLedgers = await tx.ledger.findMany({ where: { memberId, field: LEDGER_FIELD.BEANS } });
+        const { selectFIFOConsume, recomputeBatchesFromLedger } = await import('@clinic/shared');
+        const reconciled = recomputeBatchesFromLedger(batches as any, beanLedgers as any);
+        const plan = selectFIFOConsume(reconciled, Math.abs(Number(delta)));
         let left = Math.abs(Number(delta));
         for (const pl of plan) { const take = Math.min(left, pl.consume); await tx.beanBatch.update({ where: { id: pl.batchId }, data: { remaining: { decrement: take } } }); left -= take; }
       }

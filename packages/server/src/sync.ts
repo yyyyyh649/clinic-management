@@ -1,7 +1,7 @@
 // Sync endpoints: device register, push (client -> server), pull (server -> client).
 import { Router } from 'express';
 import { prisma } from './db.js';
-import { applySyncRecords, makeSyncRecord, SYNC_TABLES } from '@clinic/shared';
+import { applySyncRecords, makeSyncRecord, SYNC_TABLES, expireDueBeanBatches } from '@clinic/shared';
 import type { SyncRecord, SyncTableName } from '@clinic/shared';
 import { recomputeAnomalies } from './anomaly.js';
 import { verifyPassword, PASSWORD_KEY } from './passwords.js';
@@ -50,6 +50,9 @@ syncRouter.post('/push', async (req, res) => {
   if (!deviceId) return res.status(400).json({ error: 'missing deviceId' });
 
   const result = await applySyncRecords(prisma, records || []);
+  // Bean expiry sweep after merge: pulled/pushed batches may now be past due.
+  // Idempotent (deterministic ledger id), so safe to run on every push.
+  await expireDueBeanBatches(prisma).catch(() => {});
   // mark pushed ledgers as synced on server (they came from client; server copy is authoritative now)
   // Recompute anomalies for affected members.
   let anomalies: { memberId: string; field: string; value: number }[] = [];

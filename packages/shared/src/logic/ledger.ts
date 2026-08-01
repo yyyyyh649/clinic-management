@@ -29,13 +29,38 @@ export function spendableBeans(batches: BeanBatch[], now: Date = new Date()): nu
   return total;
 }
 
+// Recompute each batch's TRUE remaining from the append-only Ledger.
+// BeanBatch.remaining is a mutable counter decremented on consume; under
+// offline multi-device LWW sync merge it can be overstated (two devices each
+// decrement from 200->100, the later one wins -> server stays at 100 instead
+// of 0). The Ledger (append-only, dedup by id) is the authoritative source,
+// so we rebuild remaining = total - sum(consume deltas for this batchId).
+// This makes spendableBeans / selectFIFOConsume correct even when the stored
+// remaining drifted from LWW merge.
+export function recomputeBatchesFromLedger(batches: BeanBatch[], ledgers: Ledger[]): BeanBatch[] {
+  const consumedByBatch = new Map<string, number>();
+  for (const l of ledgers) {
+    if (l.beanBatchId && l.field === LEDGER_FIELD.BEANS && l.delta < 0) {
+      consumedByBatch.set(l.beanBatchId, (consumedByBatch.get(l.beanBatchId) || 0) + l.delta);
+    }
+  }
+  return batches.map((b) => {
+    const consumed = consumedByBatch.get(b.id) || 0;
+    const realRemaining = Math.max(0, b.total + consumed); // total is the original award, consumed is negative
+    return { ...b, remaining: realRemaining };
+  });
+}
+
 export function computeBalances(ledgers: Ledger[], batches: BeanBatch[], now: Date = new Date()): BalanceSummary {
   const sums = sumLedger(ledgers);
+  // Rebuild batch.remaining from the authoritative Ledger so that LWW merge
+  // drift on the stored counter can never inflate spendable beans.
+  const reconciledBatches = recomputeBatchesFromLedger(batches, ledgers);
   return {
     balanceCents: sums.balanceCents,
     beans: sums.beans,
     points: sums.points,
-    spendableBeans: spendableBeans(batches, now),
+    spendableBeans: spendableBeans(reconciledBatches, now),
   };
 }
 

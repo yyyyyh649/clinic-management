@@ -3,6 +3,7 @@ import { PrismaClient } from '@clinic/shared';
 import { config } from './config.js';
 import { seedIfEmpty } from './seed-loader.js';
 import { ensurePasswords } from './passwords.js';
+import { expireDueBeanBatches } from '@clinic/shared';
 
 // Ensure DATABASE_URL is set before instantiating PrismaClient (Prisma reads env at construct time).
 if (!process.env.DATABASE_URL) {
@@ -20,6 +21,9 @@ export async function initDb() {
   // Ensure DB-backed passwords exist (seed from .env on first boot; fail if both
   // missing — spec F/B.8). Must run after schema/seed so the Password table exists.
   await ensurePasswords(prisma);
-  // Auto-apply bean expiry on boot (clear any due batches left over while offline).
-  // (Anomaly recompute runs after each sync.)
+  // Bean expiry sweep: write down batches past their expiresAt with an EXPIRE
+  // ledger + set expired flag. Idempotent (deterministic ledger id). Without
+  // this, expired batches were never核销 — 累计豆 stayed inflated forever and
+  // no audit trail was left.
+  await expireDueBeanBatches(prisma).catch((e) => console.error('[db] bean expiry sweep failed:', e));
 }
