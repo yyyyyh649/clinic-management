@@ -124,7 +124,7 @@ export function registerHandlers(getWin: () => BrowserWindow | null) {
 
   // ---- member register / detail / list / adjust ----
   ipcMain.handle('clinic:registerMember', async (_e, input: any) => {
-    const { name, phone, cardNo, birthday, address, registeredById, registeredByName, initialBalanceCents = 0, initialBeans = 0, customerId: existingCustomerId } = input;
+    const { name, phone, cardNo, birthday, address, registeredById, registeredByName, cashPaidCents = 0, initialBalanceCents = 0, initialBeans = 0, customerId: existingCustomerId } = input;
     if (!name || !phone || !cardNo || !birthday || !registeredById) throw new Error('姓名、手机号、卡号、生日、登记人必填');
     if (await p().member.findUnique({ where: { cardNo } })) throw new Error('该会员卡号已存在');
     const setting = await beanSetting();
@@ -137,13 +137,22 @@ export function registerHandlers(getWin: () => BrowserWindow | null) {
       const memberId = uuid();
       const member = await tx.member.create({ data: { id: memberId, customerId: customer.id, cardNo, registeredBy: registeredById, registeredByName: registeredByName || '', registeredStoreId: dev.storeId, registeredStoreName: dev.storeName, registeredAt: new Date() } });
       await tx.customer.update({ where: { id: customer.id }, data: { isMember: true, memberId } });
-      if (Number(initialBalanceCents) > 0) {
-        await tx.ledger.create({ data: { id: uuid(), memberId, field: LEDGER_FIELD.BALANCE, delta: Number(initialBalanceCents), source: LEDGER_SOURCE.INIT, reason: '开卡初始余额', refType: 'INIT', operatorId: registeredById, operatorName: registeredByName || '', storeId: dev.storeId, storeName: dev.storeName, deviceId: dev.deviceId, syncStatus: 'PENDING', origin: 'CLIENT' } });
+      // 入账：cashPaid > 0 走 Recharge 路径（现金池 + 余额池按 balanceAdded），否则赠卡走 Ledger INIT
+      const balanceAddedCents = initialBalanceCents > 0 ? initialBalanceCents : cashPaidCents;
+      if (cashPaidCents > 0) {
+        const rechargeId = uuid();
+        await tx.recharge.create({ data: { id: rechargeId, memberId, cardNo, cashPaid: cashPaidCents, balanceAdded: balanceAddedCents, beansGifted: initialBeans, pointsGifted: 0, note: '开卡储值', operatorId: registeredById, operatorName: registeredByName || '', storeId: dev.storeId, storeName: dev.storeName, deviceId: dev.deviceId } });
+        if (balanceAddedCents > 0) {
+          await tx.ledger.create({ data: { id: uuid(), memberId, field: LEDGER_FIELD.BALANCE, delta: balanceAddedCents, source: LEDGER_SOURCE.RECHARGE, reason: '开卡充值', refType: 'RECHARGE', refId: rechargeId, operatorId: registeredById, operatorName: registeredByName || '', storeId: dev.storeId, storeName: dev.storeName, deviceId: dev.deviceId, syncStatus: 'PENDING', origin: 'CLIENT' } });
+        }
+      } else if (initialBalanceCents > 0) {
+        await tx.ledger.create({ data: { id: uuid(), memberId, field: LEDGER_FIELD.BALANCE, delta: initialBalanceCents, source: LEDGER_SOURCE.INIT, reason: '开卡初始余额（赠卡）', refType: 'INIT', operatorId: registeredById, operatorName: registeredByName || '', storeId: dev.storeId, storeName: dev.storeName, deviceId: dev.deviceId, syncStatus: 'PENDING', origin: 'CLIENT' } });
       }
       if (Number(initialBeans) > 0) {
         const batchId = uuid();
-        await tx.beanBatch.create({ data: { id: batchId, memberId, remaining: Number(initialBeans), total: Number(initialBeans), expiresAt: computeBatchExpiry(new Date(), setting), source: 'INIT', refId: member.id } });
-        await tx.ledger.create({ data: { id: uuid(), memberId, field: LEDGER_FIELD.BEANS, delta: Number(initialBeans), source: LEDGER_SOURCE.INIT, reason: '开卡初始豆', refType: 'INIT', beanBatchId: batchId, operatorId: registeredById, operatorName: registeredByName || '', storeId: dev.storeId, storeName: dev.storeName, deviceId: dev.deviceId, syncStatus: 'PENDING', origin: 'CLIENT' } });
+        const source = cashPaidCents > 0 ? 'RECHARGE_GIFT' : 'INIT';
+        await tx.beanBatch.create({ data: { id: batchId, memberId, remaining: Number(initialBeans), total: Number(initialBeans), expiresAt: computeBatchExpiry(new Date(), setting), source, refId: member.id } });
+        await tx.ledger.create({ data: { id: uuid(), memberId, field: LEDGER_FIELD.BEANS, delta: Number(initialBeans), source: source === 'RECHARGE_GIFT' ? LEDGER_SOURCE.RECHARGE : LEDGER_SOURCE.INIT, reason: source === 'RECHARGE_GIFT' ? '开卡充值赠送豆' : '开卡初始豆', refType: source === 'RECHARGE_GIFT' ? 'RECHARGE' : 'INIT', refId: member.id, beanBatchId: batchId, operatorId: registeredById, operatorName: registeredByName || '', storeId: dev.storeId, storeName: dev.storeName, deviceId: dev.deviceId, syncStatus: 'PENDING', origin: 'CLIENT' } });
       }
       return member;
     });

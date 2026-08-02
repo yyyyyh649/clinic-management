@@ -15,7 +15,7 @@ export default function MemberRegister() {
   const [tiers, setTiers] = useState<any[]>([]);
   const [form, setForm] = useState({
     name: '', phone: '', cardNo: '', birthday: yesterdayStr(), address: '',
-    registeredById: '', initialBalance: '', initialBeans: '',
+    registeredById: '', cashPaid: '', initialBalance: '', initialBeans: '',
   });
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
@@ -72,12 +72,18 @@ export default function MemberRegister() {
     setBusy(true);
     try {
       const staffObj = staff.find((s) => s.id === form.registeredById);
+      // cashPaid：实付现金（>0 时走 Recharge 路径 → 现金池入账 + 余额池按 initialBalance 入账）
+      // initialBalance：开卡时给卡里加的余额（无赠送/收款时=cashPaid；赠卡时单独填）
+      // initialBeans：开卡时送的豆
+      const cashPaidCents = form.cashPaid ? parseYuanToCents(form.cashPaid) : 0;
+      const initialBalanceCents = form.initialBalance ? parseYuanToCents(form.initialBalance) : 0;
       const r = await api.registerMember({
         name: form.name, phone: form.phone, cardNo: form.cardNo,
         birthday: form.birthday, address: form.address || undefined,
         registeredById: form.registeredById,
         registeredByName: staffObj?.name || '',
-        initialBalanceCents: form.initialBalance ? parseYuanToCents(form.initialBalance) : 0,
+        cashPaidCents,
+        initialBalanceCents,
         initialBeans: form.initialBeans ? parseInt(form.initialBeans, 10) || 0 : 0,
         customerId: reuseCustomerId || undefined,
       });
@@ -104,7 +110,7 @@ export default function MemberRegister() {
           </div>
           <div className="mt-4 flex gap-2">
             <Button onClick={() => nav(`/member/${result.member.id}`)}>查看会员详情</Button>
-            <Button variant="ghost" onClick={() => { setResult(null); setForm({ name: '', phone: '', cardNo: '', birthday: yesterdayStr(), address: '', registeredById: '', initialBalance: '', initialBeans: '' }); setReuseCustomerId(null); setReuseHint(''); }}>继续登记下一个</Button>
+            <Button variant="ghost" onClick={() => { setResult(null); setForm({ name: '', phone: '', cardNo: '', birthday: yesterdayStr(), address: '', registeredById: '', cashPaid: '', initialBalance: '', initialBeans: '' }); setReuseCustomerId(null); setReuseHint(''); }}>继续登记下一个</Button>
           </div>
         </Card>
       </div>
@@ -140,7 +146,10 @@ export default function MemberRegister() {
               {staff.map((s) => <option key={s.id} value={s.id}>{s.name} ({s.code})</option>)}
             </select>
           </Field>
-          <Field label="初始余额（元，可选）">
+          <Field label="实付现金（元，开卡收款时填）" hint="填了会创建充值记录进入现金池；不填=赠卡（只给初始余额/豆，不入现金池）">
+            <Input type="number" value={form.cashPaid} onChange={(e) => set('cashPaid', e.target.value)} />
+          </Field>
+          <Field label="初始余额（元，可选）" hint="没填「实付现金」时：开卡直接给卡里加这么多余额（赠卡）；填了「实付现金」时：默认=实付现金（无赠送），可手动改（如充 100 送 10 → 填 110）">
             <Input type="number" value={form.initialBalance} onChange={(e) => set('initialBalance', e.target.value)} />
           </Field>
           <Field label="初始豆（可选）">

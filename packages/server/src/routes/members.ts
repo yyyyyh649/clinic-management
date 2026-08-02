@@ -125,8 +125,8 @@ memberRouter.post('/', async (req, res) => {
   const {
     name, phone, cardNo, birthday, address, registeredById, registeredByName,
     registeredStoreId, registeredStoreName, registeredDeviceId,
-    initialBalanceCents = 0, initialBeans = 0, // 选填初始余额/豆
-    customerId: existingCustomerId, // if reusing an existing customer
+    initialBalanceCents = 0, initialBeans = 0, cashPaidCents = 0, // cashPaidCents>0 走 Recharge 路径（入现金池）
+    customerId: existingCustomerId,
     operatorMemberId,
   } = req.body || {};
 
@@ -167,28 +167,61 @@ memberRouter.post('/', async (req, res) => {
     });
     await tx.customer.update({ where: { id: customer.id }, data: { isMember: true, memberId } });
 
-    // 2. init ledger: balance + beans (POINTS starts 0, grows via awards)
-    if (Number(initialBalanceCents) > 0) {
+    // 2. 入账：cashPaid > 0 走 Recharge 路径（现金池 + 余额池按 balanceAdded）；
+    //            cashPaid = 0 且 initialBalance > 0 走 Ledger INIT（赠卡不入现金池）。
+    const balanceAddedCents = initialBalanceCents > 0 ? initialBalanceCents : cashPaidCents;
+    if (cashPaidCents > 0) {
+      const rechargeId = uuid();
+      await tx.recharge.create({
+        data: {
+          id: rechargeId, memberId, cardNo,
+          cashPaid: cashPaidCents,
+          balanceAdded: balanceAddedCents,
+          beansGifted: initialBeans,
+          pointsGifted: 0,
+          note: '开卡储值',
+          operatorId: registeredById, operatorName: registeredByName || '',
+          storeId: registeredStoreId, storeName: registeredStoreName || '', deviceId: registeredDeviceId || '',
+        },
+      });
+      if (balanceAddedCents > 0) {
+        await tx.ledger.create({
+          data: {
+            id: uuid(), memberId, field: LEDGER_FIELD.BALANCE, delta: balanceAddedCents,
+            source: LEDGER_SOURCE.RECHARGE, reason: '开卡充值', refType: 'RECHARGE', refId: rechargeId,
+            operatorId: registeredById, operatorName: registeredByName || '',
+            storeId: registeredStoreId, storeName: registeredStoreName || '', deviceId: registeredDeviceId || '',
+            syncStatus: 'SYNCED', origin: 'SERVER',
+          },
+        });
+      }
+    } else if (initialBalanceCents > 0) {
       await tx.ledger.create({
         data: {
-          id: uuid(), memberId, field: LEDGER_FIELD.BALANCE, delta: Number(initialBalanceCents),
-          source: LEDGER_SOURCE.INIT, reason: '开卡初始余额', refType: 'INIT',
+          id: uuid(), memberId, field: LEDGER_FIELD.BALANCE, delta: initialBalanceCents,
+          source: LEDGER_SOURCE.INIT, reason: '开卡初始余额（赠卡）', refType: 'INIT',
           operatorId: registeredById, operatorName: registeredByName || '',
           storeId: registeredStoreId, storeName: registeredStoreName || '', deviceId: registeredDeviceId || '',
           syncStatus: 'SYNCED', origin: 'SERVER',
         },
       });
     }
+    // 3. 开卡赠豆：两种路径（充值赠送/纯赠）都进 BeanBatch + Ledger
     if (Number(initialBeans) > 0) {
       const batchId = uuid();
       const expiresAt = computeBatchExpiry(new Date(), setting);
+      const source = cashPaidCents > 0 ? 'RECHARGE_GIFT' : 'INIT';
+      const refId = member.id; // 简化：都关联 member
       await tx.beanBatch.create({
-        data: { id: batchId, memberId, remaining: Number(initialBeans), total: Number(initialBeans), expiresAt, source: 'INIT', refId: member.id },
+        data: { id: batchId, memberId, remaining: Number(initialBeans), total: Number(initialBeans), expiresAt, source, refId },
       });
       await tx.ledger.create({
         data: {
           id: uuid(), memberId, field: LEDGER_FIELD.BEANS, delta: Number(initialBeans),
-          source: LEDGER_SOURCE.INIT, reason: '开卡初始豆', refType: 'INIT', beanBatchId: batchId,
+          source: source === 'RECHARGE_GIFT' ? LEDGER_SOURCE.RECHARGE : LEDGER_SOURCE.INIT,
+          reason: source === 'RECHARGE_GIFT' ? '开卡充值赠送豆' : '开卡初始豆',
+          refType: source === 'RECHARGE_GIFT' ? 'RECHARGE' : 'INIT',
+          refId, beanBatchId: batchId,
           operatorId: registeredById, operatorName: registeredByName || '',
           storeId: registeredStoreId, storeName: registeredStoreName || '', deviceId: registeredDeviceId || '',
           syncStatus: 'SYNCED', origin: 'SERVER',
