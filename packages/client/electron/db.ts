@@ -38,9 +38,26 @@ async function runMigrations() {
   const migrations: string[] = [
     // voidedAt added to ExamRecord for B.6 (void unpaid drafts)
     'ALTER TABLE "ExamRecord" ADD COLUMN "voidedAt" DATETIME',
+    // discardedAt + revisesExamId added for §2.2 版本化编辑检查单
+    // (commit a0de7a5 added fields to schema.prisma but missed these ALTER TABLE
+    // migrations, breaking offline register/edit on devices with old DBs).
+    'ALTER TABLE "ExamRecord" ADD COLUMN "discardedAt" DATETIME',
+    'ALTER TABLE "ExamRecord" ADD COLUMN "revisesExamId" TEXT',
   ];
   for (const sql of migrations) {
     try { await prisma!.$executeRawUnsafe(sql); } catch { /* column already exists */ }
+  }
+  // Indexes for common query patterns (commit a0de7a5 added these to schema.prisma
+  // @@index but schema.sql / runMigrations didn't create them on existing DBs).
+  const indexes: string[] = [
+    'CREATE INDEX IF NOT EXISTS "ExamRecord_revisesExamId_idx" ON "ExamRecord"("revisesExamId")',
+    'CREATE INDEX IF NOT EXISTS "ExamRecord_registeredBy_idx" ON "ExamRecord"("registeredBy")',
+    'CREATE INDEX IF NOT EXISTS "Member_registeredAt_idx" ON "Member"("registeredAt")',
+    'CREATE INDEX IF NOT EXISTS "Member_registeredStoreId_idx" ON "Member"("registeredStoreId")',
+    'CREATE INDEX IF NOT EXISTS "Customer_createdAt_idx" ON "Customer"("createdAt")',
+  ];
+  for (const sql of indexes) {
+    try { await prisma!.$executeRawUnsafe(sql); } catch { /* index already exists */ }
   }
 }
 
