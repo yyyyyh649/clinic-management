@@ -16,7 +16,8 @@ export default function MemberDetail() {
   const nav = useNavigate();
   const [data, setData] = useState<any>(null);
   const [showAdj, setShowAdj] = useState(false);
-  const [adj, setAdj] = useState({ field: 'BALANCE', delta: '', reason: '' });
+  const [adj, setAdj] = useState({ field: 'BALANCE', delta: '', cashPaid: '', reason: '', operatorId: '' });
+  const [staff, setStaff] = useState<any[]>([]);
   const [showEdit, setShowEdit] = useState(false);
   const [edit, setEdit] = useState({ name: '', phone: '', address: '', birthday: '', changePassword: '', reason: '' });
   const [usage, setUsage] = useState<any[]>([]);
@@ -31,16 +32,26 @@ export default function MemberDetail() {
     api.listMemberUsage(id).then((u) => setUsage(u.items || []));
   }
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [id]);
+  useEffect(() => { api.getStaff().then((s: any) => setStaff(s || [])); }, []);
 
   async function submitAdj() {
     setErr('');
-    if (!adj.delta || !adj.reason.trim()) { setErr('增减量和备注必填'); return; }
+    if (!adj.delta && !adj.cashPaid) { setErr('增减量和充值值现金至少填一个'); return; }
+    if (adj.field === 'BALANCE' && !adj.delta && adj.cashPaid) { setErr('充值现金时增减量必填（哪怕填 0 也行）'); return; }
+    if (!adj.reason.trim()) { setErr('备注原因必填'); return; }
+    if (!adj.operatorId) { setErr('请选择操作人'); return; }
     setBusy(true);
     try {
       const cents = adj.field === 'BALANCE' ? parseYuanToCents(adj.delta) : parseInt(adj.delta, 10);
-      await api.adjustLedger(id!, { field: adj.field, delta: cents, reason: adj.reason, operatorName: '后台' });
+      const cashPaidCents = adj.field === 'BALANCE' && adj.cashPaid ? parseYuanToCents(adj.cashPaid) : 0;
+      const staffObj = staff.find((s) => s.id === adj.operatorId);
+      await api.adjustLedger(id!, {
+        field: adj.field, delta: cents, cashPaidCents,
+        reason: adj.reason,
+        operatorId: adj.operatorId, operatorName: staffObj?.name || '后台',
+      });
       setShowAdj(false);
-      setAdj({ field: 'BALANCE', delta: '', reason: '' });
+      setAdj({ field: 'BALANCE', delta: '', cashPaid: '', reason: '', operatorId: adj.operatorId });
       await load();
     } catch (e: any) { setErr(e.message); } finally { setBusy(false); }
   }
@@ -194,8 +205,19 @@ export default function MemberDetail() {
           <Field label="增减量（正=加，负=减）" required hint={adj.field === 'BALANCE' ? '单位元' : '单位豆/分'}>
             <Input type="number" value={adj.delta} onChange={(e) => setAdj((a) => ({ ...a, delta: e.target.value }))} />
           </Field>
+          {adj.field === 'BALANCE' && (
+            <Field label="充值值现金（元，可选）" hint="如果填了，填入实际收到的现金金额，会记入营业额的现金池（不记入储值池）。增减量填 0 + 充值值现金 = 纯现金入账">
+              <Input type="number" value={adj.cashPaid} onChange={(e) => setAdj((a) => ({ ...a, cashPaid: e.target.value }))} />
+            </Field>
+          )}
           <Field label="备注原因（必填）" required>
             <TextArea rows={2} value={adj.reason} onChange={(e) => setAdj((a) => ({ ...a, reason: e.target.value }))} />
+          </Field>
+          <Field label="操作人" required>
+            <select className="input" value={adj.operatorId} onChange={(e) => setAdj((a) => ({ ...a, operatorId: e.target.value }))}>
+              <option value="">请选择</option>
+              {staff.map((s) => <option key={s.id} value={s.id}>{s.name} ({s.code})</option>)}
+            </select>
           </Field>
           {err && <div className="rounded-md bg-rose-50 px-3 py-2 text-sm text-rose-700">{err}</div>}
         </div>

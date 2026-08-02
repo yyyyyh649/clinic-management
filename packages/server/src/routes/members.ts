@@ -266,32 +266,48 @@ memberRouter.put('/:id', async (req, res) => {
 
 // ---------- Adjust balance / beans / points (Ledger 增量, reason required) ----------
 memberRouter.post('/:id/ledger', async (req, res) => {
-  const { field, delta, reason, operatorId, operatorName, storeId, storeName, deviceId } = req.body || {};
+  const { field, delta, reason, operatorId, operatorName, storeId, storeName, deviceId, cashPaidCents = 0 } = req.body || {};
   if (!field || delta === undefined) return res.status(400).json({ error: '字段和增减量必填' });
   if (!reason || !reason.trim()) return res.status(400).json({ error: '必须填写备注原因' });
   if (![LEDGER_FIELD.BALANCE, LEDGER_FIELD.BEANS, LEDGER_FIELD.POINTS].includes(field)) {
     return res.status(400).json({ error: '无效字段' });
   }
+  if (Number(cashPaidCents) < 0) return res.status(400).json({ error: '现金充值值不能为负' });
   const setting = await loadBeanExpirySetting();
   const memberId = req.params.id;
   const id = uuid();
 
   const entry = await prisma.$transaction(async (tx) => {
     let beanBatchId: string | undefined;
+    let rechargeId: string | undefined;
+
+    // 1. 现金池：cashPaidCents > 0 时（仅 BALANCE 字段）创建 Recharge，balanceAdded=0
+    //    储值池由「增减量」独立控制，两者不重复。
+    if (Number(cashPaidCents) > 0 && field === LEDGER_FIELD.BALANCE) {
+      rechargeId = uuid();
+      const member = await tx.member.findUnique({ where: { id: memberId } });
+      await tx.recharge.create({
+        data: {
+          id: rechargeId, memberId, cardNo: member?.cardNo || '',
+          cashPaid: Number(cashPaidCents),
+          balanceAdded: 0, // 关键：储值池由 delta 独立控制，不重复
+          beansGifted: 0, pointsGifted: 0,
+          note: reason.trim() + '（手动调整·现金池入账）',
+          operatorId: operatorId || 'admin', operatorName: operatorName || '后台',
+          storeId: storeId || '', storeName: storeName || '', deviceId: deviceId || '',
+        },
+      });
+    }
+
+    // 2. 豆 batch 处理
     if (field === LEDGER_FIELD.BEANS && Number(delta) > 0) {
-      // positive beans create a new expiring batch
       const batchId = uuid();
       await tx.beanBatch.create({
         data: { id: batchId, memberId, remaining: Number(delta), total: Number(delta), expiresAt: computeBatchExpiry(new Date(), setting), source: 'AWARD', refId: id },
       });
       beanBatchId = batchId;
     } else if (field === LEDGER_FIELD.BEANS && Number(delta) < 0) {
-      // negative beans => FIFO consume from batches
       const batches = await tx.beanBatch.findMany({ where: { memberId } });
-      // Rebuild remaining from the append-only Ledger so that LWW sync merge
-      // drift on the stored counter can't let FIFO pick an already-drained
-      // batch. payment-service.ts and electron handlers.ts already do this;
-      // this was the one code path that missed the补丁.
       const beanLedgers = await tx.ledger.findMany({ where: { memberId, field: LEDGER_FIELD.BEANS } });
       const reconciledBatches = recomputeBatchesFromLedger(batches as any, beanLedgers as any);
       const plan = selectFIFOConsume(reconciledBatches, Math.abs(Number(delta)));
@@ -305,7 +321,8 @@ memberRouter.post('/:id/ledger', async (req, res) => {
     return tx.ledger.create({
       data: {
         id, memberId, field, delta: Number(delta), source: LEDGER_SOURCE.ADJUST,
-        reason, refType: 'ADJUST', beanBatchId,
+        reason: reason.trim(), refType: rechargeId ? 'ADJUST_WITH_RECHARGE' : 'ADJUST',
+        refId: rechargeId, beanBatchId,
         operatorId: operatorId || 'admin', operatorName: operatorName || '后台',
         storeId: storeId || '', storeName: storeName || '', deviceId: deviceId || '',
         syncStatus: 'SYNCED', origin: 'SERVER',
@@ -313,7 +330,6 @@ memberRouter.post('/:id/ledger', async (req, res) => {
     });
   });
 
-  // recompute anomaly for this member (e.g. manual fix resolves a negative)
   const { recomputeAnomalies } = await import('../anomaly.js');
   await recomputeAnomalies([memberId]);
   res.json(entry);
