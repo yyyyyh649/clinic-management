@@ -453,3 +453,13 @@ CREATE INDEX IF NOT EXISTS "ExamRecord_registeredBy_idx" ON "ExamRecord"("regist
 CREATE INDEX IF NOT EXISTS "Member_registeredAt_idx" ON "Member"("registeredAt");
 CREATE INDEX IF NOT EXISTS "Member_registeredStoreId_idx" ON "Member"("registeredStoreId");
 CREATE INDEX IF NOT EXISTS "Customer_createdAt_idx" ON "Customer"("createdAt");
+
+
+-- Add columns (a0de7a5 missed these in initial schema.sql; needed for §2.2 versioning + offline mode)
+-- Note: these are also added via ALTER TABLE in runMigrations for existing DBs;
+-- here only affects fresh DBs created by applySchema.
+CREATE INDEX IF NOT EXISTS "ExamRecord_revisesExamId_idx" ON "ExamRecord"("revisesExamId");
+CREATE INDEX IF NOT EXISTS "ExamRecord_registeredBy_idx" ON "ExamRecord"("registeredBy");
+CREATE INDEX IF NOT EXISTS "Member_registeredAt_idx" ON "Member"("registeredAt");
+CREATE INDEX IF NOT EXISTS "Member_registeredStoreId_idx" ON "Member"("registeredStoreId");
+CREATE INDEX IF NOT EXISTS "Customer_createdAt_idx" ON "Customer"("createdAt");
