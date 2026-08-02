@@ -50,6 +50,10 @@ export default function Payment() {
   const [payForMember, setPayForMember] = useState<any>(null);
   // useCard: whether to use a member card for deduction. Default true if customer is a member.
   const [useCard, setUseCard] = useState(true);
+  // awardMember: full member object selected for 积分归属 (used to display the card owner's name
+  // when "归属其他会员" is picked). Different from payForMember only in theory; in practice
+  // they point to the same card because the search modal sets both.
+  const [awardMember, setAwardMember] = useState<any>(null);
 
   useEffect(() => {
     if (!examId) return;
@@ -69,13 +73,18 @@ export default function Payment() {
 
   // The registrar (登记人) — the single operator for the whole transaction (E).
   const registrar = exam ? staff.find((s) => s.id === exam.registeredBy) : null;
-  // 归属默认：登记人是会员 -> 归登记人本人；否则需选择其他会员。
+  // 默认归属：客户本身是会员 → 选「归属本人」；客户不是会员 → 选「不累计积分」(none)
+  // 旧逻辑默认给登记人是会员的人，这里改为基于客户身份（用户要求的三选一逻辑）
   useEffect(() => {
-    if (registrar?.isMember && registrar.memberId && !cfg.awardMemberId) {
-      setCfg((c) => ({ ...c, awardMemberId: registrar.memberId! }));
+    if (!cfg.awardMemberId && exam?.customer) {
+      const c = exam.customer;
+      if (c.isMember && c.memberId) {
+        setCfg((prev) => ({ ...prev, awardMemberId: c.memberId }));
+      }
+      // 客户不是会员 → awardMemberId 保持空，UI 默认显示「不累计积分」
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [registrar]);
+  }, [exam?.customer?.isMember, exam?.customer?.memberId]);
 
   // ---- computed amounts ----
   const baseAmount = exam?.baseAmount || 0;
@@ -104,9 +113,13 @@ export default function Payment() {
   const balanceOverage = useCard && balanceDeductCents > cardBalanceCents;
   const beansOverage = useCard && beansDeductCount > cardBeans;
   // "全部抵扣" helpers: cap at remaining amount, never go negative.
+  // 整百向下取整（135 豆 → 100 豆，250 豆 → 200 豆），避免"全部抵扣"按钮 set 出非整百值
   const remainingAfterBeans = Math.max(0, afterDiscount - beansDeductAmount);
   const maxBalanceDeduct = Math.min(cardBalanceCents, remainingAfterBeans) / 100; // 元
-  const maxBeansDeduct = Math.min(cardBeans, Math.floor(afterDiscount / 100) * 100); // 整百
+  const maxBeansDeduct = Math.min(
+    Math.floor(cardBeans / 100) * 100,
+    Math.floor(afterDiscount / 100) * 100
+  ); // 整百
 
   // Prefill 实付现金 with the system-calculated value (B.4) until the user edits it.
   useEffect(() => {
@@ -116,6 +129,15 @@ export default function Payment() {
   const cashPaidCents = cfg.cashPaid ? parseYuanToCents(cfg.cashPaid) : 0;
   const cashMismatch = cashPaidCents !== expectedCash;
   const needsReason = cashMismatch && !cfg.editReason.trim();
+
+  // 积分归属三选一（用户要求）：none=不累计积分 / self=归属本人 / other=归属其他会员
+  // 派生：awardMemberId 为空 -> none；等于 customer.memberId -> self；其他 -> other
+  const customerIsMember = !!(exam?.customer?.isMember && exam?.customer?.memberId);
+  const awardMode: 'none' | 'self' | 'other' = !cfg.awardMemberId
+    ? 'none'
+    : customerIsMember && cfg.awardMemberId === exam.customer.memberId
+      ? 'self'
+      : 'other';
 
   const defaultBeansAwarded = Math.floor(cashPaidCents / 100);
   // Prefill 获得豆/累计积分 with defaults (B.4) until the user edits them.
@@ -323,7 +345,10 @@ export default function Payment() {
                         placeholder="如 800"
                         className={balanceOverage ? 'border-rose-500' : ''}
                       />
-                      <Button size="sm" variant="ghost" onClick={() => set('balanceDeduct', String(maxBalanceDeduct))}>全部抵扣</Button>
+                      <Button size="sm" variant="ghost" onClick={() => {
+                        set('balanceDeduct', String(maxBalanceDeduct));
+                        setTouched((t) => ({ ...t, cash: false })); // 让实付自动 re-fill
+                      }}>全部抵扣</Button>
                     </div>
                   </Field>
                   <Field
@@ -338,7 +363,10 @@ export default function Payment() {
                         placeholder="如 500"
                         className={beansOverage ? 'border-rose-500' : ''}
                       />
-                      <Button size="sm" variant="ghost" onClick={() => set('beansDeduct', String(maxBeansDeduct))}>全部抵扣</Button>
+                      <Button size="sm" variant="ghost" onClick={() => {
+                        set('beansDeduct', String(maxBeansDeduct));
+                        setTouched((t) => ({ ...t, cash: false })); // 让实付自动 re-fill（豆抵扣后钱应该自动少）
+                      }}>全部抵扣</Button>
                     </div>
                   </Field>
                 </div>
@@ -386,17 +414,57 @@ export default function Payment() {
                 <Field label="累计积分（可改）">
                   <Input type="number" value={cfg.pointsAwarded} onChange={(e) => { setTouched((t) => ({ ...t, points: true })); set('pointsAwarded', e.target.value); }} />
                 </Field>
-                <Field label="归属会员" error={!cfg.awardMemberId ? '登记人不是会员，请选择归属会员' : undefined}>
-                  <Select value={cfg.awardMemberId} onChange={(e) => set('awardMemberId', e.target.value)}>
-                    <option value="">请选择</option>
-                    {registrar?.isMember && registrar.memberId && <option value={registrar.memberId}>{exam.registeredByName} · 登记人本人</option>}
-                    {searchResults.filter((m) => !registrar || m.id !== registrar.memberId).map((m) => <option key={m.id} value={m.id}>{m.customer?.name} · {m.cardNo}</option>)}
-                    {exam.customer?.isMember && (!registrar || exam.customer.memberId !== registrar.memberId) && <option value={exam.customer.memberId}>{exam.customer.name} · 本客户</option>}
-                  </Select>
+                <Field label="积分归属" error={awardMode === 'none' ? undefined : (awardMode === 'self' && !customerIsMember ? '客户不是会员，无法归属本人' : undefined)}>
+                  <div className="space-y-2">
+                    {/* 不累计积分：awardMemberId 清空 + 豆和积分都强制 0 */}
+                    <label className="flex items-center gap-2 text-sm">
+                      <input
+                        type="radio" name="award-mode" checked={awardMode === 'none'}
+                        onChange={() => {
+                          set('awardMemberId', '');
+                          setAwardMember(null);
+                          set('beansAwarded', '0');
+                          set('pointsAwarded', '0');
+                          setTouched((t) => ({ ...t, beans: true, points: true }));
+                        }}
+                      />
+                      <span>不累计积分（也不发豆）</span>
+                    </label>
+                    {/* 归属本人：仅 customer 是会员时可用，否则灰色禁用 */}
+                    <label className={`flex items-center gap-2 text-sm ${customerIsMember ? '' : 'cursor-not-allowed opacity-50'}`}>
+                      <input
+                        type="radio" name="award-mode" checked={awardMode === 'self'}
+                        disabled={!customerIsMember}
+                        onChange={() => {
+                          if (!customerIsMember) return;
+                          set('awardMemberId', exam.customer.memberId);
+                          setAwardMember(null);
+                        }}
+                      />
+                      <span className={customerIsMember ? '' : 'text-ink-400'}>
+                        归属本人（{exam.customer?.name} · {exam.customer?.phone}）
+                      </span>
+                    </label>
+                    {/* 归属其他会员：选后弹搜索模态，选中后回填 awardMember 显示卡主姓名 */}
+                    <label className="flex items-center gap-2 text-sm">
+                      <input
+                        type="radio" name="award-mode" checked={awardMode === 'other'}
+                        onChange={() => setShowSearch(true)}
+                      />
+                      <span>
+                        归属其他会员
+                        {awardMember?.customer?.name ? (
+                          <span className="ml-1 text-brand-700">（{awardMember.customer.name} · 卡号 {awardMember.cardNo}）</span>
+                        ) : (
+                          <span className="ml-1 text-ink-400">（点击下方搜索）</span>
+                        )}
+                      </span>
+                    </label>
+                  </div>
                 </Field>
               </div>
               <div className="mt-2 text-xs text-ink-500">
-                提示：登记人是会员默认归属登记人本人；不是会员必须选其他会员。点击下方按钮搜索其他会员。
+                点击下方搜索会员，选中后既作为代付卡也作为积分归属。客户本身是会员时才能选「归属本人」。
                 <Button size="sm" variant="ghost" className="ml-2" onClick={() => setShowSearch(true)}>搜索会员</Button>
               </div>
             </div>
@@ -424,7 +492,11 @@ export default function Payment() {
                   <div className="text-sm font-medium">{m.customer?.name} · {m.customer?.phone}</div>
                   <div className="text-xs text-ink-500">卡号 {m.cardNo}</div>
                 </div>
-                <Button size="sm" onClick={() => { pickPayFor(m); setCfg((c) => ({ ...c, awardMemberId: m.id })); }}>确认身份并使用</Button>
+                <Button size="sm" onClick={() => {
+                  pickPayFor(m);
+                  setCfg((c) => ({ ...c, awardMemberId: m.id }));
+                  setAwardMember(m); // 保存完整对象，积分归属 radio 显示卡主姓名
+                }}>确认身份并使用</Button>
               </div>
             ))}
             {searchResults.length === 0 && <div className="py-4 text-center text-xs text-ink-500">输入条件后点击搜索</div>}
