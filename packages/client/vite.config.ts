@@ -1,5 +1,7 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
+import tailwindcss from 'tailwindcss';
+import autoprefixer from 'autoprefixer';
 import path from 'node:path';
 
 export default defineConfig({
@@ -14,6 +16,16 @@ export default defineConfig({
       // ("process is not defined"), so we alias a Prisma-free subpath to the
       // source constants.ts directly. parseYuanToCents etc. live here.
       '@clinic/shared/constants': path.resolve(__dirname, '../shared/src/constants.ts'),
+    },
+  },
+  // 显式指定 tailwind config 绝对路径，避免 cwd 非 packages/client/ 时 content
+  // 解析失败导致 @apply 自定义 class 被 tree-shake（与 web/vite.config.ts 同因）。
+  css: {
+    postcss: {
+      plugins: [
+        tailwindcss({ config: path.resolve(__dirname, 'tailwind.config.js') }),
+        autoprefixer(),
+      ],
     },
   },
   server: {

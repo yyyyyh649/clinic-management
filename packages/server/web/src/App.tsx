@@ -69,7 +69,7 @@ export default function App() {
         <div className="text-base font-semibold text-ink-900">眼科客户管理</div>
         <div className="text-xs text-ink-500">连锁后台</div>
       </div>
-      <nav className="flex-1 space-y-1 overflow-auto p-2">
+      <nav className="flex-1 space-y-2 overflow-auto p-2">
         {NAV.map((n) => (
           <NavLink
             key={n.to}
