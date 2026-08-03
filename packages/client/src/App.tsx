@@ -24,23 +24,35 @@ function SyncIndicator() {
   const s = useSyncStatus();
   if (!isElectron) return null;
   const online = s.online;
+  const allSynced = online && s.pending === 0;
   const last = s.lastSyncAt ? new Date(s.lastSyncAt) : null;
   const ageMin = last ? Math.max(0, Math.floor((Date.now() - last.getTime()) / 60000)) : null;
   const ageLabel = ageMin === null ? '未同步' : ageMin === 0 ? '刚刚' : ageMin < 60 ? `${ageMin}分钟前` : `${Math.floor(ageMin / 60)}小时前`;
   return (
     <div className="flex items-center gap-1.5 text-xs">
-      <span className={`inline-block h-2 w-2 rounded-full ${online ? 'bg-emerald-500' : 'bg-rose-500'}`} />
-      <span className={online ? 'text-emerald-700' : 'text-rose-700'}>
-        {online ? '在线' : '离线'}
-      </span>
-      {!online && <span className="text-rose-600">· 数据更新于{ageLabel}</span>}
-      {s.pending > 0 && (
-        <span title={`本机还有 ${s.pending} 条记录尚未同步到云端服务器`} className="cursor-help">
-          <Badge tone="amber">{s.pending}待传</Badge>
-        </span>
-      )}
-      {online && s.pending === 0 && (
-        <button className="text-ink-500 hover:text-brand-600" onClick={() => api.syncNow()}>立即同步</button>
+      <span className={`inline-block h-2 w-2 rounded-full ${allSynced ? 'bg-emerald-500' : online ? 'bg-amber-500' : 'bg-rose-500'}`} />
+      {allSynced ? (
+        <span className="font-medium text-emerald-700">✓ 已全部同步</span>
+      ) : online ? (
+        <>
+          <span className="text-amber-700">在线</span>
+          {s.pending > 0 && (
+            <span title={`本机还有 ${s.pending} 条记录尚未同步到云端服务器`} className="cursor-help">
+              <Badge tone="amber">{s.pending}待传</Badge>
+            </span>
+          )}
+          <button className="text-ink-500 hover:text-brand-600" onClick={() => api.syncNow()}>立即同步</button>
+        </>
+      ) : (
+        <>
+          <span className="text-rose-700">离线</span>
+          <span className="text-rose-600">· 数据更新于{ageLabel}</span>
+          {s.pending > 0 && (
+            <span title={`本机还有 ${s.pending} 条记录尚未同步到云端服务器`} className="cursor-help">
+              <Badge tone="amber">{s.pending}待传</Badge>
+            </span>
+          )}
+        </>
       )}
     </div>
   );

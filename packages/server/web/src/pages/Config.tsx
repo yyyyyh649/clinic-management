@@ -56,7 +56,10 @@ function StoresTab() {
           {items.map((s) => (
             <tr key={s.id} className="border-b border-slate-100">
               <td className="py-2">{s.code}</td><td>{s.name}</td><td>{fmtDate(s.createdAt)}</td>
-              <td><Button size="sm" variant="ghost" onClick={() => { setEditing(s); setForm({ code: s.code, name: s.name }); }}>编辑</Button></td>
+              <td className="flex gap-1">
+                <Button size="sm" variant="ghost" onClick={() => { setEditing(s); setForm({ code: s.code, name: s.name }); }}>编辑</Button>
+                <Button size="sm" variant="ghost" onClick={() => { if (confirm(`确定删除门店「${s.name}」？历史记录保留原信息。`)) api.deleteStore(s.id).then(load); }}>删除</Button>
+              </td>
             </tr>
           ))}
         </tbody>
@@ -120,7 +123,9 @@ function StaffTab() {
               <td>{s.depts.split(',').map((d: string) => d === 'OPTICAL' ? '配镜部' : '眼科部').join('、')}</td>
               <td>{s.isMember ? <Badge tone="blue">会员</Badge> : '—'}</td>
               <td>{s.active ? <Badge tone="green">在职</Badge> : <Badge tone="slate">停用</Badge>}</td>
-              <td><Button size="sm" variant="ghost" onClick={() => { setEditing(s); setForm({ name: s.name, code: s.code, depts: s.depts, isMember: s.isMember, memberId: s.memberId || '', phone: s.phone || '', active: s.active }); }}>编辑</Button></td>
+              <td><Button size="sm" variant="ghost" onClick={() => { setEditing(s); setForm({ name: s.name, code: s.code, depts: s.depts, isMember: s.isMember, memberId: s.memberId || '', phone: s.phone || '', active: s.active }); }}>编辑</Button>
+                <Button size="sm" variant="ghost" onClick={() => { if (confirm(`确定删除店员「${s.name}」？历史记录保留原信息。`)) api.deleteStaff(s.id).then(load); }}>删除</Button>
+              </td>
             </tr>
           ))}
         </tbody>
@@ -313,6 +318,7 @@ function BrandsTab() {
                     <td className="py-2">{b.name}</td>
                     <td className="text-right">
                       <Button size="sm" variant="ghost" onClick={() => { setEditing(b); setForm({ name: b.name, type: b.type, sortIndex: b.sortIndex, active: b.active }); }}>编辑</Button>
+                      <Button size="sm" variant="ghost" onClick={() => { if (confirm(`确定删除品牌「${b.name}」？`)) api.deleteBrand(b.id).then(load); }}>删除</Button>
                     </td>
                   </tr>
                 ))}
