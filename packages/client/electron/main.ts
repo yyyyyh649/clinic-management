@@ -8,8 +8,10 @@ import { startSyncLoop, stopSyncLoop, onSyncStatus } from './sync.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-const DEV_URL = process.env.VITE_DEV_SERVER_URL;
-const isDev = !!DEV_URL;
+// 用 Electron 官方的 app.isPackaged 判断开发/生产，不依赖外部环境变量。
+// 旧逻辑用 process.env.VITE_DEV_SERVER_URL 容易被遗留的 shell 会话污染，
+// 导致正式打包的 exe 一启动就连到 dev server（5174），页面空白。
+const isDev = !app.isPackaged;
 
 let win: BrowserWindow | null = null;
 
@@ -31,7 +33,8 @@ async function createWindow() {
   onSyncStatus((s) => { win?.webContents.send('clinic:syncStatus', s); });
 
   if (isDev) {
-    await win.loadURL(DEV_URL!);
+    const url = process.env.VITE_DEV_SERVER_URL || 'http://localhost:5174';
+    await win.loadURL(url);
     win.webContents.openDevTools({ mode: 'detach' });
   } else {
     await win.loadFile(path.join(__dirname, '../dist-renderer/index.html'));
