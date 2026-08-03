@@ -208,8 +208,6 @@ export function registerHandlers(getWin: () => BrowserWindow | null) {
         await tx.beanBatch.create({ data: { id: batchId, memberId, remaining: Number(delta), total: Number(delta), expiresAt: computeBatchExpiry(new Date(), setting), source: 'AWARD', refId: id } });
       } else if (field === LEDGER_FIELD.BEANS && Number(delta) < 0) {
         const batches = await tx.beanBatch.findMany({ where: { memberId } });
-        // 用 Ledger 重算 batch.remaining，防止 LWW 同步合并导致存储值虚高、
-        // FIFO 选中实际已耗尽的批次。
         const beanLedgers = await tx.ledger.findMany({ where: { memberId, field: LEDGER_FIELD.BEANS } });
         const { selectFIFOConsume, recomputeBatchesFromLedger } = await import('@clinic/shared');
         const reconciled = recomputeBatchesFromLedger(batches as any, beanLedgers as any);
@@ -217,14 +215,18 @@ export function registerHandlers(getWin: () => BrowserWindow | null) {
         let left = Math.abs(Number(delta));
         for (const pl of plan) { const take = Math.min(left, pl.consume); await tx.beanBatch.update({ where: { id: pl.batchId }, data: { remaining: { decrement: take } } }); left -= take; }
       }
-      await tx.ledger.create({ data: { id, memberId, field, delta: Number(delta), source: LEDGER_SOURCE.ADJUST, reason, refType: 'ADJUST', operatorId: operatorId || '前台', operatorName: operatorName || '前台', storeId: dev.storeId, storeName: dev.storeName, deviceId: dev.deviceId, syncStatus: 'PENDING', origin: 'CLIENT' } });
-      // If this is a recharge (positive balance + cash received), create a Recharge row.
+      // 现金池：cashReceivedCents > 0 时先建 Recharge（balanceAdded 恒为0，储值池由下面的 delta 独立控制），
+      // 拿到 rechargeId 再传给 Ledger.refId，跟服务端 /members/:id/ledger 保持一致的写法，
+      // 后台"资金池管理"和会员详情页才能按 refId 把两条记录关联/合并。
+      let rechargeId: string | undefined;
       if (cashReceivedCents > 0) {
         const m = await tx.member.findUnique({ where: { id: memberId } });
         if (m) {
-          await tx.recharge.create({ data: { id: uuid(), memberId, cardNo: m.cardNo, cashPaid: cashReceivedCents, balanceAdded: 0, beansGifted: 0, pointsGifted: 0, note: reason, operatorId: operatorId || '前台', operatorName: operatorName || '前台', storeId: dev.storeId, storeName: dev.storeName, deviceId: dev.deviceId } });
+          rechargeId = uuid();
+          await tx.recharge.create({ data: { id: rechargeId, memberId, cardNo: m.cardNo, cashPaid: cashReceivedCents, balanceAdded: 0, beansGifted: 0, pointsGifted: 0, note: reason + '（手动调整·现金池入账）', operatorId: operatorId || '前台', operatorName: operatorName || '前台', storeId: dev.storeId, storeName: dev.storeName, deviceId: dev.deviceId } });
         }
       }
+      await tx.ledger.create({ data: { id, memberId, field, delta: Number(delta), source: LEDGER_SOURCE.ADJUST, reason, refType: rechargeId ? 'ADJUST_WITH_RECHARGE' : 'ADJUST', refId: rechargeId, operatorId: operatorId || '前台', operatorName: operatorName || '前台', storeId: dev.storeId, storeName: dev.storeName, deviceId: dev.deviceId, syncStatus: 'PENDING', origin: 'CLIENT' } });
     });
     return { ok: true };
   });
