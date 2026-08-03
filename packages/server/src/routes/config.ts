@@ -27,8 +27,13 @@ configRouter.put('/stores/:id', async (req, res) => {
   res.json(s);
 });
 configRouter.delete('/stores/:id', async (req, res) => {
-  // soft delete + recycle entry
-  await prisma.store.update({ where: { id: req.params.id }, data: { deletedAt: new Date() } });
+  // soft delete + 给 code 加后缀释放唯一约束，允许新建相同编码的门店
+  const store = await prisma.store.findUnique({ where: { id: req.params.id } });
+  if (!store) return res.status(404).json({ error: '门店不存在' });
+  await prisma.store.update({
+    where: { id: req.params.id },
+    data: { deletedAt: new Date(), code: `${store.code}_deleted_${Date.now()}` },
+  });
   res.json({ ok: true });
 });
 
@@ -61,7 +66,13 @@ configRouter.put('/staff/:id', async (req, res) => {
   res.json(s);
 });
 configRouter.delete('/staff/:id', async (req, res) => {
-  await prisma.staff.update({ where: { id: req.params.id }, data: { deletedAt: new Date() } });
+  // soft delete + 给 code 加后缀释放唯一约束，允许新建相同工号的店员
+  const staff = await prisma.staff.findUnique({ where: { id: req.params.id } });
+  if (!staff) return res.status(404).json({ error: '店员不存在' });
+  await prisma.staff.update({
+    where: { id: req.params.id },
+    data: { deletedAt: new Date(), code: `${staff.code}_deleted_${Date.now()}` },
+  });
   res.json({ ok: true });
 });
 
