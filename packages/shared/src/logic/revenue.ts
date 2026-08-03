@@ -109,7 +109,7 @@ export function computeRevenue(
       totalStored: opticalStoredConsume + eyeStoredConsume,
       total: optical.total + eye.total,
       rechargeCashInMonth: newCash,
-      rechargeStoredInMonth: newStored,
+      rechargeStoredInMonth: newStored + Math.max(0, adjustStored),
       poolCashBase, poolStoredBase,
       carryCashToNext: carryCashNext,
       carryStoredToNext: carryStoredNext,
