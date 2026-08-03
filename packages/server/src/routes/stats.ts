@@ -52,7 +52,22 @@ statsRouter.get('/funds', async (req, res) => {
   if (storeId) ledgerWhere.storeId = storeId;
   const balanceAdjusts = await prisma.ledger.findMany({ where: ledgerWhere, orderBy: { createdAt: 'desc' } });
 
-  // Build per-month summary + collect detail records.
+  // 手动调整明细原来只带 memberId，没有 cardNo，前端就显示成了UUID。这里补一次映射。
+  const memberIds = [...new Set(balanceAdjusts.map((l) => l.memberId))];
+  const members = memberIds.length
+    ? await prisma.member.findMany({ where: { id: { in: memberIds } }, select: { id: true, cardNo: true } })
+    : [];
+  const cardNoByMemberId = new Map(members.map((m) => [m.id, m.cardNo]));
+
+  // 「充值+手动调整余额」在写入时被拆成 Recharge(现金,balanceAdded恒为0) + Ledger(储值,refType='ADJUST_WITH_RECHARGE')
+  // 两条记录，用 ledger.refId === recharge.id 把它们配对，展示时合并成一行。
+  const rechargeById = new Map(recharges.map((r) => [r.id, r]));
+  const ledgerByRechargeId = new Map(
+    balanceAdjusts
+      .filter((l) => l.refType === 'ADJUST_WITH_RECHARGE' && l.refId && rechargeById.has(l.refId))
+      .map((l) => [l.refId as string, l])
+  );
+
   const months: Record<string, { newCash: number; newStored: number; details: any[] }> = {};
   for (let m = 1; m <= 12; m++) {
     months[`${year}-${m}`] = { newCash: 0, newStored: 0, details: [] };
@@ -62,22 +77,30 @@ statsRouter.get('/funds', async (req, res) => {
     const d = new Date(r.createdAt);
     if (d.getFullYear() !== year) continue;
     const key = `${year}-${d.getMonth() + 1}`;
+    const linkedLedger = ledgerByRechargeId.get(r.id);
+    // 总量口径不变：原来是 r.balanceAdded(通常为0) 和 linkedLedger.delta 分别求和，
+    // 现在合并成一次求和，数值上完全等价，不会多算。
+    const storedAmount = r.balanceAdded + (linkedLedger ? linkedLedger.delta : 0);
     months[key].newCash += r.cashPaid;
-    months[key].newStored += r.balanceAdded;
+    months[key].newStored += storedAmount;
     months[key].details.push({
       type: 'RECHARGE', id: r.id, createdAt: r.createdAt,
-      cardNo: r.cardNo, cashPaid: r.cashPaid, balanceAdded: r.balanceAdded,
-      beansGifted: r.beansGifted, operatorName: r.operatorName, storeName: r.storeName, note: r.note,
+      cardNo: r.cardNo, cashPaid: r.cashPaid, balanceAdded: storedAmount,
+      beansGifted: r.beansGifted, operatorName: r.operatorName, storeName: r.storeName,
+      note: linkedLedger ? linkedLedger.reason : r.note,
     });
   }
   for (const l of balanceAdjusts) {
+    // 已经在上面合并进对应的 recharge 行了，这里跳过，避免重复展示和重复计入。
+    if (l.refType === 'ADJUST_WITH_RECHARGE' && l.refId && rechargeById.has(l.refId)) continue;
     const d = new Date(l.createdAt);
     if (d.getFullYear() !== year) continue;
     const key = `${year}-${d.getMonth() + 1}`;
     months[key].newStored += l.delta;
     months[key].details.push({
       type: 'ADJUST', id: l.id, createdAt: l.createdAt,
-      memberId: l.memberId, delta: l.delta, reason: l.reason,
+      memberId: l.memberId, cardNo: cardNoByMemberId.get(l.memberId) || '',
+      delta: l.delta, reason: l.reason,
       operatorName: l.operatorName, storeName: l.storeName,
     });
   }

@@ -109,6 +109,21 @@ export async function loadMemberDetail(prisma: PrismaClient, memberId: string) {
     where: { payForMemberId: memberId },
     orderBy: { createdAt: 'desc' },
   });
+  // 关联查 Recharge.cashPaid：对 refType=RECHARGE 或 ADJUST_WITH_RECHARGE 的 ledger，
+  // 用 refId（=Recharge.id）查出对应的 cashPaid，附加到 ledger 上供前端显示"充值现金"列。
+  const rechargeIds = member.ledgers
+    .filter((l) => (l.refType === 'RECHARGE' || l.refType === 'ADJUST_WITH_RECHARGE') && l.refId)
+    .map((l) => l.refId as string);
+  const linkedRecharges = rechargeIds.length
+    ? await prisma.recharge.findMany({ where: { id: { in: rechargeIds } }, select: { id: true, cashPaid: true } })
+    : [];
+  const cashPaidByRechargeId = new Map(linkedRecharges.map((r) => [r.id, r.cashPaid]));
+  const ledgersWithCash = member.ledgers.map((l) => ({
+    ...l,
+    cashPaidCents: (l.refType === 'RECHARGE' || l.refType === 'ADJUST_WITH_RECHARGE') && l.refId
+      ? (cashPaidByRechargeId.get(l.refId) ?? 0)
+      : 0,
+  }));
   return {
     member,
     customer: member.customer,
@@ -116,7 +131,7 @@ export async function loadMemberDetail(prisma: PrismaClient, memberId: string) {
     tier,
     exams,
     usagePayments,
-    ledgers: member.ledgers,
+    ledgers: ledgersWithCash,
     // Reconcile beanBatches.remaining from the append-only Ledger so the 豆到期
     // 提醒 (which reads batch.remaining) stays consistent with balances.
     // spendableBeans (shown as 可用豆) already rebuilds from Ledger inside

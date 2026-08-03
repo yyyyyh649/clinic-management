@@ -152,7 +152,7 @@ export default function MemberDetail() {
           <table className="w-full text-sm">
             <thead className="text-xs text-ink-500">
               <tr className="border-b border-slate-200 text-left">
-                <th className="py-2">时间</th><th>字段</th><th>增减</th><th>原因</th><th>来源</th><th>操作人/门店</th>
+                <th className="py-2">时间</th><th>字段</th><th>增减</th><th>充值现金</th><th>原因</th><th>来源</th><th>操作人/门店</th>
               </tr>
             </thead>
             <tbody>
@@ -161,6 +161,7 @@ export default function MemberDetail() {
                   <td className="py-2">{fmtDateTime(l.createdAt)}</td>
                   <td>{fieldLabel(l.field)}</td>
                   <td className={l.delta >= 0 ? 'text-emerald-700' : 'text-rose-700'}>{l.delta >= 0 ? '+' : ''}{l.field === 'BALANCE' ? fmtCents(l.delta) : l.delta}</td>
+                  <td>{l.cashPaidCents ? <span className="text-brand-700">{fmtCents(l.cashPaidCents)}</span> : '—'}</td>
                   <td className="max-w-xs truncate">{l.reason}</td>
                   <td>{sourceLabel(l.source)}{l.refType ? ` · ${l.refType}` : ''}</td>
                   <td className="text-xs">{l.operatorName} / {l.storeName}</td>
