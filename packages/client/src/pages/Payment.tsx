@@ -184,7 +184,10 @@ export default function Payment() {
     if (beansOverage) { setErr(`豆超额：卡内仅剩 ${cardBeans} 豆，无法抵扣 ${beansDeductCount} 豆`); return; }
     if (beansDeductCount > 0 && beansDeductCount % 100 !== 0) { setErr('豆抵现必须整百使用'); return; }
     if (cashMismatch && !cfg.editReason.trim()) { setErr('实付金额与系统计算不一致，必须填写修改原因'); return; }
-    if ((beansAwarded > 0 || pointsAwarded > 0) && !cfg.awardMemberId) { setErr('登记人不是会员或未选择归属会员，无法发放豆/积分'); return; }
+    // 「不累计积分」模式：强制不发豆和积分，跳过 awardMemberId 校验
+    const finalBeansAwarded = awardMode === 'none' ? 0 : beansAwarded;
+    const finalPointsAwarded = awardMode === 'none' ? 0 : pointsAwarded;
+    if ((finalBeansAwarded > 0 || finalPointsAwarded > 0) && !cfg.awardMemberId) { setErr('登记人不是会员或未选择归属会员，无法发放豆/积分'); return; }
 
     setBusy(true);
     try {
@@ -199,8 +202,8 @@ export default function Payment() {
         cashPaidCents,
         cashPaidEdited: cashMismatch, // auto-detected by the system (B.4)
         editReason: cfg.editReason || undefined,
-        beansAwardedOverride: cfg.beansAwarded === '' ? undefined : beansAwarded,
-        pointsAwardedOverride: cfg.pointsAwarded === '' ? undefined : pointsAwarded,
+        beansAwardedOverride: awardMode === 'none' ? 0 : (cfg.beansAwarded === '' ? undefined : beansAwarded),
+        pointsAwardedOverride: awardMode === 'none' ? 0 : (cfg.pointsAwarded === '' ? undefined : pointsAwarded),
         awardMemberId: cfg.awardMemberId || undefined,
       });
       setDone(res);
