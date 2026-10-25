@@ -27,10 +27,10 @@ export function commissionForMerged(totalCents: number): number {
 }
 
 // Aggregate raw rows into per-staff performance with store breakdown.
+// Note: openCount is filled by the caller (separate query), not here.
 export function aggregatePerformance(rows: PerfRaw[]): StaffPerformanceRow[] {
   const map = new Map<string, StaffPerformanceRow>();
   const stores = new Map<string, Map<string, { storeId: string; storeName: string; consume: number }>>();
-  const openCount = new Map<string, number>(); // filled by caller via separate call
   for (const r of rows) {
     let s = map.get(r.staffId);
     if (!s) {

@@ -17,7 +17,15 @@ import { PhoneInput, isPhoneValid } from '../components/PhoneInput';
 // whose barrel re-exports the Prisma client — pulling Prisma into the renderer
 // bundle breaks the browser environment with "process is not defined").
 const DEFAULT_REVIEW_DAYS = 90;
-const todayStr = () => new Date().toISOString().slice(0, 10);
+// 本地时区日期（YYYY-MM-DD）。不能用 toISOString()——它转 UTC，
+// 本地 08:00 前会切到前一天。
+const localDateStr = (d: Date) => {
+  const dd = new Date(d);
+  dd.setMinutes(dd.getMinutes() - dd.getTimezoneOffset());
+  return dd.toISOString().slice(0, 10);
+};
+const todayStr = () => localDateStr(new Date());
+const yesterdayStr = () => { const d = new Date(); d.setDate(d.getDate() - 1); return localDateStr(d); };
 // datetime-local 输入需要本地时间格式（不含时区后缀）。
 const nowLocal = () => {
   const d = new Date();
@@ -30,9 +38,9 @@ const toLocalInput = (d: Date | string) => {
   return date.toISOString().slice(0, 16);
 };
 const addDaysFromStr = (from: string, days: number) => {
-  const d = new Date(from);
+  const d = new Date(from); // 本地时间解析
   d.setDate(d.getDate() + days);
-  return d.toISOString().slice(0, 10);
+  return localDateStr(d);   // 本地时区格式化，避免 UTC 切日期导致复查日偏一天
 };
 
 interface Page {
@@ -237,7 +245,7 @@ export default function ExamRegister() {
                   />
                 </Field>
                 <Field label="生日（可选）" hint="用于自动计算年龄，不能选今天及以后">
-                  <Input type="date" max={todayStr()} value={form.birthday} onChange={(e) => setForm((f) => ({ ...f, birthday: e.target.value }))} />
+                  <Input type="date" max={yesterdayStr()} value={form.birthday} onChange={(e) => setForm((f) => ({ ...f, birthday: e.target.value }))} />
                 </Field>
                 <Field label="住址（可选）">
                   <Input value={form.address} onChange={(e) => setForm((f) => ({ ...f, address: e.target.value }))} />

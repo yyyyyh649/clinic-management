@@ -5,12 +5,48 @@ const electronApi = (typeof window !== 'undefined' ? (window as any).clinic : un
   | undefined
   | Record<string, (...args: any[]) => Promise<any>>;
 
-async function http<T = any>(method: string, path: string, body?: any): Promise<T> {
-  const res = await fetch(path, {
-    method,
-    headers: body !== undefined ? { 'Content-Type': 'application/json' } : undefined,
-    body: body !== undefined ? JSON.stringify(body) : undefined,
+// 浏览器 fallback 模式的后台会话 token（服务端对 /api/members、/api/exams、
+// /api/payments 等接口要求 x-backend-token 头）。登录后存 localStorage。
+const TOKEN_KEY = 'clinic_backend_token';
+function getBackendToken(): string | null {
+  try { return localStorage.getItem(TOKEN_KEY); } catch { return null; }
+}
+
+// 401 时提示输入后台密码，调 /api/auth/login 换取 token 存入 localStorage。
+// 返回是否成功拿到 token。
+async function loginForBackendToken(): Promise<boolean> {
+  const password = window.prompt('需要后台密码才能继续（浏览器模式）');
+  if (!password) return false;
+  const res = await fetch('/api/auth/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ password }),
   });
+  if (!res.ok) return false;
+  const data = (await res.json().catch(() => null)) as { token?: string } | null;
+  if (!data?.token) return false;
+  try { localStorage.setItem(TOKEN_KEY, data.token); } catch { /* ignore */ }
+  return true;
+}
+
+async function http<T = any>(method: string, path: string, body?: any): Promise<T> {
+  const doFetch = () => {
+    const headers: Record<string, string> = {};
+    if (body !== undefined) headers['Content-Type'] = 'application/json';
+    const token = getBackendToken();
+    if (token) headers['x-backend-token'] = token;
+    return fetch(path, {
+      method,
+      headers: Object.keys(headers).length ? headers : undefined,
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    });
+  };
+  let res = await doFetch();
+  // 401: token 缺失/过期 —— 让用户输入后台密码登录后重试原请求一次。
+  if (res.status === 401 && path !== '/api/auth/login') {
+    const ok = await loginForBackendToken().catch(() => false);
+    if (ok) res = await doFetch();
+  }
   const text = await res.text();
   if (!res.ok) {
     let msg = `请求失败 (${res.status})`;

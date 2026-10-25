@@ -1,6 +1,7 @@
 // Stats + admin operations: revenue, performance, member/exam counts, anomaly, recycle, audit, export.
 import { Router } from 'express';
 import { prisma } from '../db.js';
+import { ah } from '../util.js';
 import {
   computeRevenue, computeRevenueSeries, aggregatePerformance, commissionForMerged,
   formatCents, formatDate, formatDateTime, RECYCLE_RETENTION_DAYS,
@@ -10,17 +11,22 @@ import type { RechargeForRevenue, PaymentForRevenue, BalanceAdjustForRevenue } f
 export const statsRouter = Router();
 
 // ---------- Revenue (§6.2): cash / stored-consume / allocated / total, with rolling结转 ----------
-statsRouter.get('/revenue', async (req, res) => {
+statsRouter.get('/revenue', ah(async (req, res) => {
   const year = Number(req.query.year) || new Date().getFullYear();
   const month = req.query.month ? Number(req.query.month) : new Date().getMonth() + 1;
   const storeId = req.query.storeId as string | undefined;
 
-  const rechargeWhere: any = {};
+  // computeRevenue 的滚动结转最多需要上年 12 月以来的记录；DB 层按 createdAt
+  // 过滤，避免全表拉取后内存过滤。
+  const rangeFrom = new Date(year - 1, 11, 1);
+  const rangeTo = new Date(year + 1, 0, 1);
+
+  const rechargeWhere: any = { createdAt: { gte: rangeFrom, lt: rangeTo } };
   if (storeId) rechargeWhere.storeId = storeId;
   const recharges = await prisma.recharge.findMany({ where: rechargeWhere });
   const rechargeForRev: RechargeForRevenue[] = recharges.map((r) => ({ cashPaid: r.cashPaid, balanceAdded: r.balanceAdded, createdAt: r.createdAt }));
 
-  const paymentWhere: any = {};
+  const paymentWhere: any = { createdAt: { gte: rangeFrom, lt: rangeTo } };
   if (storeId) paymentWhere.storeId = storeId;
   const payments = await prisma.payment.findMany({ where: paymentWhere, include: { exam: true } });
   const paymentForRev: PaymentForRevenue[] = payments.map((p) => ({
@@ -29,7 +35,7 @@ statsRouter.get('/revenue', async (req, res) => {
 
   // Manual balance adjustments via Ledger (source=ADJUST, field=BALANCE, positive delta only).
   // These increase the stored pool even when no Recharge row exists (e.g. 直接赠送).
-  const ledgerWhere: any = { field: 'BALANCE', source: 'ADJUST', delta: { gt: 0 } };
+  const ledgerWhere: any = { field: 'BALANCE', source: 'ADJUST', delta: { gt: 0 }, createdAt: { gte: rangeFrom, lt: rangeTo } };
   if (storeId) ledgerWhere.storeId = storeId;
   const balanceLedgers = await prisma.ledger.findMany({ where: ledgerWhere });
   const balanceAdjusts: BalanceAdjustForRevenue[] = balanceLedgers.map((l) => ({ delta: l.delta, createdAt: l.createdAt }));
@@ -37,18 +43,22 @@ statsRouter.get('/revenue', async (req, res) => {
   const monthRow = computeRevenue(rechargeForRev, paymentForRev, year, month, balanceAdjusts);
   const series = computeRevenueSeries(rechargeForRev, paymentForRev, year, balanceAdjusts);
   res.json({ month: monthRow, series });
-});
+}));
 
 // ---------- Funds pool (现金池/储值池) management: monthly breakdown + per-record detail ----------
-statsRouter.get('/funds', async (req, res) => {
+statsRouter.get('/funds', ah(async (req, res) => {
   const year = Number(req.query.year) || new Date().getFullYear();
   const storeId = req.query.storeId as string | undefined;
 
-  const rechargeWhere: any = {};
+  // 资金池按自然年聚合（无跨年结转逻辑），DB 层按 createdAt 过滤出当年记录。
+  const rangeFrom = new Date(year, 0, 1);
+  const rangeTo = new Date(year + 1, 0, 1);
+
+  const rechargeWhere: any = { createdAt: { gte: rangeFrom, lt: rangeTo } };
   if (storeId) rechargeWhere.storeId = storeId;
   const recharges = await prisma.recharge.findMany({ where: rechargeWhere, orderBy: { createdAt: 'desc' } });
 
-  const ledgerWhere: any = { field: 'BALANCE', source: 'ADJUST', delta: { gt: 0 } };
+  const ledgerWhere: any = { field: 'BALANCE', source: 'ADJUST', delta: { gt: 0 }, createdAt: { gte: rangeFrom, lt: rangeTo } };
   if (storeId) ledgerWhere.storeId = storeId;
   const balanceAdjusts = await prisma.ledger.findMany({ where: ledgerWhere, orderBy: { createdAt: 'desc' } });
 
@@ -116,7 +126,7 @@ statsRouter.get('/funds', async (req, res) => {
   const totalCash = items.reduce((s, m) => s + m.newCash, 0);
   const totalStored = items.reduce((s, m) => s + m.newStored, 0);
   res.json({ year, items, totalCash, totalStored, total: totalCash + totalStored });
-});
+}));
 
 // ---------- Staff performance (§6.4): optical consume, merged tiered commission, open count, brand ----------
 // B.1: every active staff whose depts include 配镜部 must appear (0 if no business),
@@ -125,7 +135,7 @@ statsRouter.get('/funds', async (req, res) => {
 //      (exam.registeredBy), not payment.operatorId. Since E makes the payment
 //      operator always equal to the registrar, they coincide in practice — but
 //      we still key off the exam so the source of truth is "who did this 配镜 job".
-statsRouter.get('/performance', async (req, res) => {
+statsRouter.get('/performance', ah(async (req, res) => {
   const year = Number(req.query.year) || new Date().getFullYear();
   const month = req.query.month ? Number(req.query.month) : new Date().getMonth() + 1;
   const storeId = req.query.storeId as string | undefined;
@@ -183,10 +193,10 @@ statsRouter.get('/performance', async (req, res) => {
   }
 
   res.json({ year, month, items: perf, commissionForMerged });
-});
+}));
 
 // Single staff across months (柱状图 dimension 2). Keyed by exam.registeredBy (B.2/E).
-statsRouter.get('/performance/:staffId', async (req, res) => {
+statsRouter.get('/performance/:staffId', ah(async (req, res) => {
   const year = Number(req.query.year) || new Date().getFullYear();
   const staffId = req.params.staffId;
   const out = [];
@@ -211,10 +221,10 @@ statsRouter.get('/performance/:staffId', async (req, res) => {
     out.push({ month: m, consume: total, commission: commissionForMerged(total), storeBreakdown: [...storeBreakdown.values()] });
   }
   res.json({ year, items: out });
-});
+}));
 
 // ---------- Member / exam counts (dashboard) ----------
-statsRouter.get('/dashboard', async (req, res) => {
+statsRouter.get('/dashboard', ah(async (req, res) => {
   const now = new Date();
   const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const weekLater = new Date(now.getTime() + 7 * 86400000);
@@ -226,13 +236,9 @@ statsRouter.get('/dashboard', async (req, res) => {
     prisma.examRecord.count({ where: { deletedAt: null, voidedAt: null, discardedAt: null } }),
     prisma.member.count({ where: { registeredAt: { gte: todayStart } } }),
     // birthday today (by month+day)
-    prisma.customer.count({
-      where: { isMember: true, deletedAt: null },
-    }).then(async () => {
-      // SQLite can't query month/day easily; fetch and filter in JS
-      const customers = await prisma.customer.findMany({ where: { isMember: true, deletedAt: null, birthday: { not: null } }, select: { birthday: true } });
-      return customers.filter((c) => { const b = new Date(c.birthday!); return b.getMonth() === now.getMonth() && b.getDate() === now.getDate(); }).length;
-    }),
+    // SQLite can't query month/day easily; fetch and filter in JS
+    prisma.customer.findMany({ where: { isMember: true, deletedAt: null, birthday: { not: null } }, select: { birthday: true } })
+      .then((customers) => customers.filter((c) => { const b = new Date(c.birthday!); return b.getMonth() === now.getMonth() && b.getDate() === now.getDate(); }).length),
     // B.6: voided drafts excluded from review-due count. §2.5: discarded too.
     prisma.examRecord.count({
       where: { deletedAt: null, voidedAt: null, discardedAt: null, reviewStatus: { in: ['PENDING', 'CONTACTED'] }, reviewDate: { lte: weekLater } },
@@ -240,37 +246,43 @@ statsRouter.get('/dashboard', async (req, res) => {
     prisma.anomalyRecord.count({ where: { status: 'OPEN' } }),
   ]);
   res.json({ memberCount, examCount, todayNewMembers, birthdayToday, reviewDue, openAnomalies });
-});
+}));
 
 // ---------- Anomaly review list (§6.7) ----------
-statsRouter.get('/anomalies', async (_req, res) => {
+statsRouter.get('/anomalies', ah(async (_req, res) => {
   const items = await prisma.anomalyRecord.findMany({ where: { status: 'OPEN' }, orderBy: { createdAt: 'desc' } });
   const out = items.map((a) => ({ ...a, conflictLedgerIds: a.conflictLedgerIds ? JSON.parse(a.conflictLedgerIds) : [] }));
   res.json({ items: out });
-});
-statsRouter.get('/anomalies/:id/ledgers', async (req, res) => {
+}));
+statsRouter.get('/anomalies/:id/ledgers', ah(async (req, res) => {
   const anomaly = await prisma.anomalyRecord.findUnique({ where: { id: req.params.id } });
   if (!anomaly) return res.status(404).json({ error: '异常记录不存在' });
   const ids: string[] = anomaly.conflictLedgerIds ? JSON.parse(anomaly.conflictLedgerIds) : [];
   const ledgers = ids.length ? await prisma.ledger.findMany({ where: { id: { in: ids } }, orderBy: { createdAt: 'desc' } }) : [];
   res.json({ anomaly, ledgers });
-});
-statsRouter.post('/anomalies/:id/resolve', async (req, res) => {
+}));
+statsRouter.post('/anomalies/:id/resolve', ah(async (req, res) => {
   const { resolvedByName, resolveNote } = req.body || {};
   if (!resolveNote) return res.status(400).json({ error: '必须填写核实说明' });
-  const a = await prisma.anomalyRecord.update({
-    where: { id: req.params.id },
-    data: { status: 'RESOLVED', resolvedAt: new Date(), resolvedByName: resolvedByName || '后台', resolveNote },
-  });
-  res.json(a);
-});
+  try {
+    const a = await prisma.anomalyRecord.update({
+      where: { id: req.params.id },
+      data: { status: 'RESOLVED', resolvedAt: new Date(), resolvedByName: resolvedByName || '后台', resolveNote },
+    });
+    res.json(a);
+  } catch (e: any) {
+    // 不把 Prisma 内部错误信息原样返回客户端。
+    console.error('[anomalies] resolve failed:', e);
+    res.status(400).json({ error: '操作失败，请重试' });
+  }
+}));
 
 // ---------- Recycle bin (§6.1, 30d retention) ----------
-statsRouter.get('/recycle', async (req, res) => {
+statsRouter.get('/recycle', ah(async (req, res) => {
   const cutoff = new Date(Date.now() - RECYCLE_RETENTION_DAYS * 86400000);
   const items = await prisma.recycleBinEntry.findMany({ where: { deletedAt: { gte: cutoff } }, orderBy: { deletedAt: 'desc' } });
   res.json({ items });
-});
+}));
 // Recycle bin stores entityType as a short alias ("EXAM", "MEMBER", ...), but
 // Prisma delegate keys are the lowercased model names. For most models that's a
 // simple first-letter-lowercase, but ExamRecord's model name is "ExamRecord"
@@ -287,7 +299,7 @@ function recycleDelegate(entityType: string): string | null {
   return ENTITY_MODEL_KEY[entityType] || null;
 }
 
-statsRouter.post('/recycle/:id/restore', async (req, res) => {
+statsRouter.post('/recycle/:id/restore', ah(async (req, res) => {
   const entry = await prisma.recycleBinEntry.findUnique({ where: { id: req.params.id } });
   if (!entry) return res.status(404).json({ error: '记录不存在' });
   const key = recycleDelegate(entry.entityType);
@@ -297,10 +309,12 @@ statsRouter.post('/recycle/:id/restore', async (req, res) => {
     await prisma.recycleBinEntry.delete({ where: { id: entry.id } });
     res.json({ ok: true });
   } catch (e: any) {
-    res.status(400).json({ error: '恢复失败: ' + e.message });
+    // 不把 Prisma 内部错误信息原样返回客户端。
+    console.error('[recycle] restore failed:', e);
+    res.status(400).json({ error: '操作失败，请重试' });
   }
-});
-statsRouter.delete('/recycle/:id', async (req, res) => {
+}));
+statsRouter.delete('/recycle/:id', ah(async (req, res) => {
   // permanently delete (only allowed after 30d retention per spec; here admin force-delete)
   const entry = await prisma.recycleBinEntry.findUnique({ where: { id: req.params.id } });
   if (!entry) return res.status(404).json({ error: '记录不存在' });
@@ -314,12 +328,14 @@ statsRouter.delete('/recycle/:id', async (req, res) => {
     await prisma.recycleBinEntry.delete({ where: { id: entry.id } });
     res.json({ ok: true });
   } catch (e: any) {
-    res.status(400).json({ error: '永久删除失败: ' + e.message });
+    // 不把 Prisma 内部错误信息原样返回客户端。
+    console.error('[recycle] permanent delete failed:', e);
+    res.status(400).json({ error: '操作失败，请重试' });
   }
-});
+}));
 
 // ---------- Audit log query (§7.3) ----------
-statsRouter.get('/audit', async (req, res) => {
+statsRouter.get('/audit', ah(async (req, res) => {
   const { year, month, day, action, entityType } = req.query as Record<string, string>;
   const where: any = {};
   if (action) where.action = action;
@@ -331,17 +347,22 @@ statsRouter.get('/audit', async (req, res) => {
   }
   const items = await prisma.auditLog.findMany({ where, orderBy: { createdAt: 'desc' }, take: 1000 });
   res.json({ items: items.map((a) => ({ ...a, details: a.details ? JSON.parse(a.details) : null })) });
-});
+}));
 
 // ---------- Export (§7.4): CSV of members / exams / payments ----------
-statsRouter.get('/export/:type', async (req, res) => {
+statsRouter.get('/export/:type', ah(async (req, res) => {
   const type = req.params.type; // members | exams | payments | recharges
   const storeId = req.query.storeId as string | undefined;
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
   res.setHeader(`Content-Disposition`, `attachment; filename="${type}.csv"`);
 
   const lines: string[] = [];
-  const q = (s: any) => `"${String(s ?? '').replace(/"/g, '""')}"`;
+  const q = (s: any) => {
+    let v = String(s ?? '');
+    // 防 CSV 公式注入：以 = + - @ 开头的值前置单引号（表格软件会当作文本）。
+    if (/^[=+\-@]/.test(v)) v = `'${v}`;
+    return `"${v.replace(/"/g, '""')}"`;
+  };
 
   if (type === 'members') {
     lines.push(['卡号', '姓名', '手机号', '生日', '档位', '累计积分', '豆', '余额', '登记人', '登记门店', '登记时间'].map(q).join(','));
@@ -385,4 +406,4 @@ statsRouter.get('/export/:type', async (req, res) => {
     return res.status(400).send('unknown type');
   }
   res.send('\ufeff' + lines.join('\n'));
-});
+}));

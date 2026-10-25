@@ -34,38 +34,43 @@ export const config = {
   dbUrl: process.env.DATABASE_URL || `file:${path.resolve(__dirname, fs.existsSync(path.resolve(__dirname, '../server.db')) ? '../server.db' : '../../../server.db')}`,
 };
 
-// In-memory admin sessions (token -> { expiry, generation }). Simple, single-process.
-// `generation` ties a session to a password-generation so changing the backend
-// password can invalidate all outstanding sessions at once (spec F).
-const sessions = new Map<string, { expiresAt: number; generation: number }>();
+// HMAC-signed, stateless admin session tokens. Format:
+//   `${expiresAtMs}.${nonce}.${sig}`
+// where sig = HMAC_SHA256(tokenSecret, `${expiresAtMs}.${nonce}.${pwFingerprint}`).
+//
+// - pwFingerprint = sha256 of the CURRENT backend password hash, so changing the
+//   backend password invalidates every outstanding token automatically (spec F),
+//   even across process restarts.
+// - Tokens survive server restarts (no in-memory session map to lose).
+// - logout is a best-effort in-memory revocation set (a restart clears it, which
+//   is acceptable: tokens are short-lived and password change is the hard kill).
 const SESSION_TTL_MS = 1000 * 60 * 60 * 12; // 12h
-let sessionGeneration = 0;
+const revoked = new Set<string>();
 
-export function currentSessionGeneration(): number {
-  return sessionGeneration;
+function sign(expiresAt: string, nonce: string, fingerprint: string): string {
+  return crypto.createHmac('sha256', config.tokenSecret)
+    .update(`${expiresAt}.${nonce}.${fingerprint}`)
+    .digest('hex');
 }
 
-export function createSession(): { token: string; expiresAt: number } {
-  const token = `${Date.now()}-${crypto.randomUUID()}`;
+export function createSession(fingerprint: string): { token: string; expiresAt: number } {
   const expiresAt = Date.now() + SESSION_TTL_MS;
-  sessions.set(token, { expiresAt, generation: sessionGeneration });
-  return { token, expiresAt };
+  const nonce = crypto.randomUUID();
+  const sig = sign(String(expiresAt), nonce, fingerprint);
+  return { token: `${expiresAt}.${nonce}.${sig}`, expiresAt };
 }
 
-export function isValidSession(token?: string | null): boolean {
-  if (!token) return false;
-  const s = sessions.get(token);
-  if (!s) return false;
-  if (s.expiresAt < Date.now()) { sessions.delete(token); return false; }
-  // Session from an older password-generation is no longer valid.
-  if (s.generation !== sessionGeneration) { sessions.delete(token); return false; }
-  return true;
+export function isValidSession(token: string | null | undefined, fingerprint: string): boolean {
+  if (!token || revoked.has(token)) return false;
+  const parts = token.split('.');
+  if (parts.length !== 3) return false;
+  const [expStr, nonce, sig] = parts;
+  const exp = Number(expStr);
+  if (!Number.isFinite(exp) || exp < Date.now()) return false;
+  const expected = sign(expStr, nonce, fingerprint);
+  const a = Buffer.from(sig, 'utf8');
+  const b = Buffer.from(expected, 'utf8');
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
 }
 
-export function revokeSession(token: string) { sessions.delete(token); }
-
-// Invalidate every outstanding session (used after the backend password changes).
-export function invalidateAllSessions(): void {
-  sessionGeneration++;
-  sessions.clear();
-}
+export function revokeSession(token: string) { revoked.add(token); }

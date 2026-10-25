@@ -69,17 +69,19 @@ export default function MemberDetail() {
   // when the phone changes — not a separate pre-verify step.
   async function submitEdit() {
     setErr('');
+    if (!edit.name.trim()) { setErr('姓名不能为空'); return; }
     if (edit.phone && !isPhoneValid(edit.phone)) { setErr('手机号格式错误（需11位、第一位为1）'); return; }
     if (edit.phone !== data.customer?.phone && !edit.changePassword) {
       setErr('修改手机号需要先输入敏感信息修改密码'); return;
     }
     setBusy(true);
     try {
-      const op = staff.find((s) => s.id === adj.operatorId);
+      // 编辑表单没有独立的操作人选择控件——与会员登记人保持一致（member.registeredBy）。
+      // （旧代码错用了调整弹窗 adj.operatorId，未打开过调整弹窗时恒为空。）
       await api.updateMember(id!, {
-        name: edit.name, phone: edit.phone, address: edit.address, birthday: edit.birthday || undefined,
+        name: edit.name.trim(), phone: edit.phone, address: edit.address, birthday: edit.birthday || undefined,
         changePassword: edit.changePassword || undefined, reason: edit.reason || '前台修改会员信息',
-        operatorId: adj.operatorId || undefined, operatorName: op?.name || '前台',
+        operatorId: data.member?.registeredBy || undefined, operatorName: data.member?.registeredByName || '前台',
       });
       setShowEdit(false);
       await load();

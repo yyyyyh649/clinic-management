@@ -6,12 +6,20 @@ export interface BeanExpirySetting {
   months: number | null; // null when disabled => never expires
 }
 
+// Add months without day-overflow drift (Jan 31 + 1 month must not roll into
+// March 3): clamp the day to the target month's length.
+function addMonthsClamped(d: Date, months: number): Date {
+  const day = d.getDate();
+  const target = new Date(d.getFullYear(), d.getMonth() + months, 1, d.getHours(), d.getMinutes(), d.getSeconds(), d.getMilliseconds());
+  const daysInTarget = new Date(target.getFullYear(), target.getMonth() + 1, 0).getDate();
+  target.setDate(Math.min(day, daysInTarget));
+  return target;
+}
+
 // Compute the expiry date for a bean award batch (non-retroactive for existing batches).
 export function computeBatchExpiry(awardedAt: Date, setting: BeanExpirySetting): Date | null {
   if (!setting.enabled || !setting.months) return null;
-  const d = new Date(awardedAt);
-  d.setMonth(d.getMonth() + setting.months);
-  return d;
+  return addMonthsClamped(new Date(awardedAt), setting.months);
 }
 
 // Batches that are due for expiry (past expiry date, still have remaining, not yet flagged).
@@ -29,11 +37,12 @@ export interface FIFOConsumePlan {
 export function selectFIFOConsume(batches: BeanBatch[], amount: number, now: Date = new Date()): FIFOConsumePlan[] {
   if (amount <= 0) return [];
   const available = batches.filter((b) => !b.expired && b.remaining > 0 && (!b.expiresAt || new Date(b.expiresAt) > now));
-  // sort: earliest expiry first; null expiry last.
+  // sort: earliest expiry first; null expiry last; ties by createdAt (strict FIFO).
   available.sort((a, b) => {
     const ae = a.expiresAt ? new Date(a.expiresAt).getTime() : Infinity;
     const be = b.expiresAt ? new Date(b.expiresAt).getTime() : Infinity;
-    return ae - be;
+    if (ae !== be) return ae - be;
+    return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
   });
   const plan: FIFOConsumePlan[] = [];
   let remaining = amount;

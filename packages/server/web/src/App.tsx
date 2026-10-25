@@ -40,10 +40,21 @@ export default function App() {
   const [drawerOpen, setDrawerOpen] = useState(false);
 
   useEffect(() => {
-    // A: allow auto-login via ?token= query param (used when embedded in the
+    // A: allow auto-login via token passed in the URL (used when embedded in the
     // Electron front-desk app, which already verified the password and passes
     // the server-issued token through). The token is consumed once then cleared
     // from the URL so it isn't leaked/shared.
+    // Preferred form is the hash (#token=...): unlike the ?token= query it is
+    // never sent to the server, so it can't end up in access logs. The query
+    // form is kept for backward compatibility.
+    const hash = window.location.hash;
+    if (hash.includes('token=')) {
+      const hashTok = new URLSearchParams(hash.slice(hash.indexOf('token='))).get('token');
+      if (hashTok) {
+        setToken(hashTok);
+        window.history.replaceState({}, '', window.location.pathname + window.location.search);
+      }
+    }
     const sp = new URLSearchParams(window.location.search);
     const tok = sp.get('token');
     if (tok) {

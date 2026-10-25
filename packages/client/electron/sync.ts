@@ -3,7 +3,7 @@ import { app } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
 import { getPrisma } from './db.js';
-import { getServerUrl, getDeviceIdentity } from './device.js';
+import { getServerUrl, getDeviceIdentity, getDeviceToken, saveDeviceToken } from './device.js';
 import {
   applySyncRecords, makeSyncRecord, SYNC_TABLES, expireDueBeanBatches,
 } from '@clinic/shared';
@@ -15,6 +15,7 @@ interface SyncState {
   online: boolean;
   lastSyncAt: string | null;
   pending: number;
+  lastError?: string | null;            // last sync error (HTTP or network), for diagnostics
 }
 
 const stateFile = () => path.join(app.getPath('userData'), 'sync-state.json');
@@ -23,7 +24,7 @@ function loadState(): SyncState {
   try {
     if (fs.existsSync(stateFile())) return JSON.parse(fs.readFileSync(stateFile(), 'utf-8'));
   } catch { /* ignore */ }
-  return { lastPushAt: {}, pullCursors: {}, online: false, lastSyncAt: null, pending: 0 };
+  return { lastPushAt: {}, pullCursors: {}, online: false, lastSyncAt: null, pending: 0, lastError: null };
 }
 function saveState(s: SyncState) {
   try { fs.writeFileSync(stateFile(), JSON.stringify(s, null, 2)); } catch { /* ignore */ }
@@ -45,6 +46,25 @@ const TABLE_DATE: Record<string, string> = {
   Setting: 'updatedAt',
 };
 function dateField(table: SyncTableName): string { return TABLE_DATE[table] || 'updatedAt'; }
+
+// HTTP error (server reachable, non-2xx response) — distinguished from network
+// errors (fetch reject / timeout) so online=false is only set when the server
+// is actually unreachable.
+class HttpError extends Error {
+  status: number;
+  constructor(message: string, status: number) { super(message); this.status = status; }
+}
+
+// Pull pagination: server returns at most this many records per pull; keep
+// pulling within one syncOnce until a short page arrives.
+const PULL_PAGE_SIZE = 500;
+
+// Pure config tables: only ever PULLED by the front desk (never written
+// locally), so aligning lastPushAt with the pull cursor is safe for them.
+// Bidirectional tables (Member/Customer/ExamRecord/Payment/...) must NOT be
+// aligned: if the device clock lags the server, advancing lastPushAt to the
+// server cursor would permanently skip unpushed local rows.
+const CONFIG_ONLY_TABLES = new Set(['Store', 'Staff', 'TierRule', 'ExamTemplate', 'Brand', 'Setting']);
 
 async function pingServer(): Promise<boolean> {
   const url = getServerUrl();
@@ -101,46 +121,84 @@ async function pushOnce(): Promise<number> {
 
   const res = await fetch(`${getServerUrl()}/api/push`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ deviceId: device.deviceId, records }),
+    body: JSON.stringify({ deviceId: device.deviceId, deviceToken: getDeviceToken() || undefined, records }),
+    signal: AbortSignal.timeout(30000),
   });
-  if (!res.ok) throw new Error(`push failed: ${res.status}`);
-  const body = (await res.json()) as { accepted?: number };
+  if (!res.ok) throw new HttpError(`push failed: ${res.status}`, res.status);
+  const body = (await res.json()) as { accepted?: number; deviceToken?: string };
+  // Server may backfill a token for legacy devices — persist and reuse.
+  if (body.deviceToken) saveDeviceToken(body.deviceToken);
   state.lastPushAt = newPushAt;
   return body.accepted || 0;
 }
 
-async function pullOnce(): Promise<number> {
+// One pull round-trip (single page). Returns the number of records received.
+async function pullPage(): Promise<number> {
   const device = getDeviceIdentity();
   if (!device) return 0;
   const prisma = getPrisma();
   const res = await fetch(`${getServerUrl()}/api/pull`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ deviceId: device.deviceId, cursors: state.pullCursors }),
+    body: JSON.stringify({ deviceId: device.deviceId, deviceToken: getDeviceToken() || undefined, cursors: state.pullCursors }),
+    signal: AbortSignal.timeout(30000),
   });
-  if (!res.ok) throw new Error(`pull failed: ${res.status}`);
-  const body = (await res.json()) as { records?: any[]; cursors?: Record<string, string> };
+  if (!res.ok) throw new HttpError(`pull failed: ${res.status}`, res.status);
+  const body = (await res.json()) as { records?: any[]; cursors?: Record<string, string>; deviceToken?: string };
+  // Server may backfill a token for legacy devices — persist and reuse.
+  if (body.deviceToken) saveDeviceToken(body.deviceToken);
   await applySyncRecords(prisma, body.records || []);
-  // Bean expiry sweep after pull: newly synced batches may be past their expiresAt.
-  // Idempotent (deterministic ledger id); creates local EXPIRE ledgers that will
-  // push back to the server (dedup by id keeps it safe).
-  await expireDueBeanBatches(prisma, new Date(), 'CLIENT').catch(() => {});
   state.pullCursors = { ...state.pullCursors, ...(body.cursors || {}) };
-  // Align push cursors with pull cursors. Config tables (Store/Staff/Tier/
-  // Template/Brand/Setting) are only ever PULLED by the front desk — the client
-  // never writes them, so lastPushAt[table] was never set, leaving countPending
-  // to treat every pulled row as "new" and re-push it every cycle. Advancing
-  // lastPushAt to the pull cursor means rows the server just sent us (whose
-  // dateField <= cursor) are no longer counted as pending. Both cursors use the
-  // same dateField per table (see TABLE_DATE in this file and server sync.ts),
-  // so they are directly comparable.
+  // Align push cursors with pull cursors for PURE CONFIG TABLES ONLY
+  // (Store/Staff/TierRule/ExamTemplate/Brand/Setting). These are only ever
+  // PULLED by the front desk — the client never writes them, so lastPushAt
+  // was never set and countPending treated every pulled row as "new" and
+  // re-pushed it every cycle. Advancing lastPushAt to the pull cursor fixes
+  // that. Bidirectional tables (Member/Customer/ExamRecord/Payment/Recharge/
+  // Ledger/BeanBatch/PhoneHistory/...) are deliberately skipped: if the
+  // device clock lags the server, adopting the server cursor would jump
+  // lastPushAt past locally-written rows and they'd never be pushed again.
   for (const [table, cursor] of Object.entries(body.cursors || {})) {
+    if (!CONFIG_ONLY_TABLES.has(table)) continue;
     const prev = state.lastPushAt[table];
     if (!prev || cursor > prev) state.lastPushAt[table] = cursor as string;
   }
   return (body.records || []).length;
 }
 
+async function pullOnce(): Promise<number> {
+  const device = getDeviceIdentity();
+  if (!device) return 0;
+  const prisma = getPrisma();
+  // Paginate until a short page (< PULL_PAGE_SIZE) arrives — the first full
+  // sync of a large database needs many pages within a single syncOnce.
+  let total = 0;
+  for (;;) {
+    const n = await pullPage();
+    total += n;
+    if (n < PULL_PAGE_SIZE) break;
+  }
+  // Bean expiry sweep after pull: newly synced batches may be past their expiresAt.
+  // Idempotent (deterministic ledger id); creates local EXPIRE ledgers that will
+  // push back to the server (dedup by id keeps it safe).
+  await expireDueBeanBatches(prisma, new Date(), 'CLIENT').catch(() => {});
+  return total;
+}
+
+// Reentrancy guard: the 30s interval tick and a manual "立即同步" click must
+// not overlap (concurrent pushOnce would double-read the same pending rows).
+let syncing = false;
+
 export async function syncOnce(): Promise<{ pushed: number; pulled: number; online: boolean }> {
+  if (syncing) return { pushed: 0, pulled: 0, online: state.online };
+  syncing = true;
+  try {
+    return await doSyncOnce();
+  } finally {
+    syncing = false;
+  }
+}
+
+async function doSyncOnce(): Promise<{ pushed: number; pulled: number; online: boolean }> {
   const online = await pingServer();
   state.online = online;
   if (!online) { state.pending = await countPending(); emit(); saveState(state); return { pushed: 0, pulled: 0, online: false }; }
@@ -158,11 +216,22 @@ export async function syncOnce(): Promise<{ pushed: number; pulled: number; onli
     const pushed = await pushOnce();
     const pulled = await pullOnce();
     state.lastSyncAt = new Date().toISOString();
+    state.online = true;
+    state.lastError = null;
     state.pending = await countPending();
     emit(); saveState(state);
     return { pushed, pulled, online: true };
-  } catch (e) {
-    state.online = false;
+  } catch (e: any) {
+    if (e instanceof HttpError) {
+      // Server reachable but rejected the request (e.g. 500, 403): stay online,
+      // just record the error. Don't flip the UI to 离线 for server-side faults.
+      state.online = true;
+      state.lastError = e.message;
+    } else {
+      // Network error (fetch reject / timeout): genuinely offline.
+      state.online = false;
+      state.lastError = e?.message || String(e);
+    }
     state.pending = await countPending();
     emit(); saveState(state);
     throw e;

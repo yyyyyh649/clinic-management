@@ -4,13 +4,12 @@
 import { ipcMain, BrowserWindow } from 'electron';
 import { v4 as uuid } from 'uuid';
 import { getPrisma } from './db.js';
-import { getDeviceIdentity, saveDeviceIdentity, getServerUrl, setServerUrl as saveServerUrl } from './device.js';
-import { syncOnce, getSyncStatus, onSyncStatus } from './sync.js';
+import { getDeviceIdentity, saveDeviceIdentity, getServerUrl, setServerUrl as saveServerUrl, type StoredDeviceIdentity } from './device.js';
+import { syncOnce, getSyncStatus } from './sync.js';
 import {
   PrismaClient, executePayment, executeRecharge, PaymentError, loadMemberDetail, loadBalances,
   createExam as createExamSvc, getExamDetail, listExams, voidExam,
   updateReviewStatus, updateExam as updateExamSvc,
-  type DeviceIdentity,
   computeTier, computeAge, memberDaysSince, computeBatchExpiry,
   type BeanExpirySetting,
   LEDGER_FIELD, LEDGER_SOURCE, DISCOUNT_TYPE, BEAN_REDEEM_MULTIPLE, parseYuanToCents,
@@ -57,7 +56,11 @@ export function registerHandlers(getWin: () => BrowserWindow | null) {
   ipcMain.handle('clinic:getDevice', () => getDeviceIdentity());
   // Server URL management (set before device bind; lets front desk point at remote cloud).
   ipcMain.handle('clinic:getServerUrl', () => getServerUrl());
-  ipcMain.handle('clinic:setServerUrl', (_e, url: string) => { saveServerUrl(url); return getServerUrl(); });
+  ipcMain.handle('clinic:setServerUrl', (_e, url: string) => {
+    if (!/^https?:\/\//i.test((url || '').trim())) throw new Error('服务器地址格式不正确，必须以 http:// 或 https:// 开头');
+    saveServerUrl((url || '').trim());
+    return getServerUrl();
+  });
   ipcMain.handle('clinic:registerDevice', async (_e, input: any) => {
     const res = await fetch(`${getServerUrl()}/api/device/register`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -67,7 +70,9 @@ export function registerHandlers(getWin: () => BrowserWindow | null) {
       const err = (await res.json()) as { error?: string };
       throw new Error(err.error || '注册失败');
     }
-    const identity = (await res.json()) as DeviceIdentity;
+    // Response includes deviceToken (server-issued per-device credential);
+    // it is persisted into device.json along with the identity.
+    const identity = (await res.json()) as StoredDeviceIdentity;
     saveDeviceIdentity(identity);
     // upsert store + device locally so the device row exists in local cache
     await p().store.upsert({ where: { id: identity.storeId }, update: { name: identity.storeName }, create: { id: identity.storeId, code: identity.storeCode, name: identity.storeName } });
@@ -75,9 +80,6 @@ export function registerHandlers(getWin: () => BrowserWindow | null) {
   });
   ipcMain.handle('clinic:getSyncStatus', () => getSyncStatus());
   ipcMain.handle('clinic:syncNow', async () => { try { return await syncOnce(); } catch (e: any) { return { error: e.message }; } });
-
-  // forward sync status updates to renderer
-  onSyncStatus((s) => { getWin()?.webContents.send('clinic:syncStatus', s); });
 
   // A: backend admin login — verifies the shared backend password against the
   // SERVER (single source of truth, same hash the browser admin uses) and returns
@@ -129,7 +131,9 @@ export function registerHandlers(getWin: () => BrowserWindow | null) {
     if (await p().member.findUnique({ where: { cardNo } })) throw new Error('该会员卡号已存在');
     const setting = await beanSetting();
     const dev = stamp(input);
-    const result = await p().$transaction(async (tx) => {
+    let result;
+    try {
+      result = await p().$transaction(async (tx) => {
       let customer = existingCustomerId ? await tx.customer.findUnique({ where: { id: existingCustomerId } }) : null;
       if (!customer) {
         customer = await tx.customer.create({ data: { id: uuid(), name, phone, birthday: new Date(birthday), address, isMember: true, createdByStaffId: registeredById, createdByStoreId: dev.storeId, createdByDeviceId: dev.deviceId } });
@@ -156,6 +160,11 @@ export function registerHandlers(getWin: () => BrowserWindow | null) {
       }
       return member;
     });
+    } catch (e: any) {
+      // 并发/重试下卡号唯一约束仍可能命中（P2002）——转成可读中文提示。
+      if (e?.code === 'P2002') throw new Error('该卡号已被使用');
+      throw e;
+    }
     return loadMemberDetail(p(), result.id);
   });
 
@@ -192,6 +201,8 @@ export function registerHandlers(getWin: () => BrowserWindow | null) {
   ipcMain.handle('clinic:adjustLedger', async (_e, { memberId, input }: any) => {
     const { field, delta, reason, operatorId, operatorName, cashReceivedYuan } = input || {};
     if (!field || delta === undefined) throw new Error('字段和增减量必填');
+    // field 白名单：只允许三个账务字段，防止脏数据写入 Ledger。
+    if (![LEDGER_FIELD.BALANCE, LEDGER_FIELD.BEANS, LEDGER_FIELD.POINTS].includes(field)) throw new Error('非法的调整字段');
     if (!reason || !reason.trim()) throw new Error('必须填写备注原因');
     const setting = await beanSetting();
     const dev = stamp(input);
@@ -235,6 +246,7 @@ export function registerHandlers(getWin: () => BrowserWindow | null) {
     const member = await p().member.findUnique({ where: { id: memberId }, include: { customer: true } });
     if (!member) throw new Error('会员不存在');
     const { name, phone, address, birthday, changePassword } = input || {};
+    if (name !== undefined && !String(name).trim()) throw new Error('姓名不能为空');
     const customer = member.customer!;
     // §password-flow: verify the CHANGE password inline (same operation as the
     // write) when the phone is being changed — mirrors the server route. The
@@ -244,10 +256,14 @@ export function registerHandlers(getWin: () => BrowserWindow | null) {
       const ok = await verifyChangePasswordOnline(changePassword || '');
       if (!ok) throw new Error('修改手机号需要敏感信息修改密码验证通过');
     }
-    if (touchingSensitive) {
-      await p().phoneHistory.create({ data: { id: uuid(), customerId: customer.id, oldPhone: customer.phone, newPhone: phone, changedBy: input.operatorId || '前台', changedByName: input.operatorName || '前台', storeId: stamp(input).storeId, reason: input.reason || '前台修改手机号' } });
-    }
-    await p().customer.update({ where: { id: customer.id }, data: { name, phone: touchingSensitive ? phone : undefined, address, birthday: birthday ? new Date(birthday) : undefined } });
+    // PhoneHistory + customer update must succeed/fail together — otherwise a
+    // failed update would leave a bogus 曾用号 record (or vice versa).
+    await p().$transaction(async (tx) => {
+      if (touchingSensitive) {
+        await tx.phoneHistory.create({ data: { id: uuid(), customerId: customer.id, oldPhone: customer.phone, newPhone: phone, changedBy: input.operatorId || '前台', changedByName: input.operatorName || '前台', storeId: stamp(input).storeId, reason: input.reason || '前台修改手机号' } });
+      }
+      await tx.customer.update({ where: { id: customer.id }, data: { name, phone: touchingSensitive ? phone : undefined, address, birthday: birthday ? new Date(birthday) : undefined } });
+    });
     return { ok: true };
   });
 
@@ -327,4 +343,26 @@ export function registerHandlers(getWin: () => BrowserWindow | null) {
   ipcMain.handle('clinic:getBrands', (_e, type?: string) => p().brand.findMany({ where: { deletedAt: null, ...(type ? { type } : {}) }, orderBy: [{ sortIndex: 'asc' }, { name: 'asc' }] }));
   ipcMain.handle('clinic:getStores', () => p().store.findMany({ where: { deletedAt: null }, orderBy: { code: 'asc' } }));
   ipcMain.handle('clinic:getSettings', async () => { const items = await p().setting.findMany(); const o: Record<string, string> = {}; for (const s of items) o[s.key] = s.value; return o; });
+
+  // Lightweight aggregate for the global reminder badges (生日 + 待复查红点) —
+  // replaces the renderer's old "pull every member + every exam each minute".
+  ipcMain.handle('clinic:getReminderCounts', async () => {
+    const now = new Date();
+    const bm = now.getMonth(), bd = now.getDate();
+    // 今日生日：只取 id + birthday，内存按月/日匹配（birthday 存的日期年份无关）。
+    const customers = await p().customer.findMany({ where: { birthday: { not: null }, deletedAt: null }, select: { id: true, birthday: true } });
+    const birthdayToday = customers.filter((c) => {
+      const d = new Date(c.birthday as any);
+      return d.getMonth() === bm && d.getDate() === bd;
+    }).length;
+    // 待/逾期复查：PENDING/CONTACTED 且复查日期在未来 7 天内（含已逾期）。
+    const reviewDue = await p().examRecord.count({
+      where: {
+        deletedAt: null, voidedAt: null, discardedAt: null,
+        reviewStatus: { in: ['PENDING', 'CONTACTED'] },
+        reviewDate: { lte: new Date(now.getTime() + 7 * 86400000) },
+      },
+    });
+    return { birthdayToday, reviewDue };
+  });
 }

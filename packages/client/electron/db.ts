@@ -43,18 +43,24 @@ async function runMigrations() {
     // migrations, breaking offline register/edit on devices with old DBs).
     'ALTER TABLE "ExamRecord" ADD COLUMN "discardedAt" DATETIME',
     'ALTER TABLE "ExamRecord" ADD COLUMN "revisesExamId" TEXT',
+    // Device.token: server-issued per-device credential (see sync.ts push/pull).
+    'ALTER TABLE "Device" ADD COLUMN "token" TEXT',
   ];
   for (const sql of migrations) {
     try { await prisma!.$executeRawUnsafe(sql); } catch { /* column already exists */ }
   }
-  // Indexes for common query patterns (commit a0de7a5 added these to schema.prisma
-  // @@index but schema.sql / runMigrations didn't create them on existing DBs).
+  // Indexes for common query patterns. CREATE INDEX IF NOT EXISTS is idempotent,
+  // so these run on every launch for both fresh and existing DBs.
   const indexes: string[] = [
     'CREATE INDEX IF NOT EXISTS "ExamRecord_revisesExamId_idx" ON "ExamRecord"("revisesExamId")',
     'CREATE INDEX IF NOT EXISTS "ExamRecord_registeredBy_idx" ON "ExamRecord"("registeredBy")',
     'CREATE INDEX IF NOT EXISTS "Member_registeredAt_idx" ON "Member"("registeredAt")',
     'CREATE INDEX IF NOT EXISTS "Member_registeredStoreId_idx" ON "Member"("registeredStoreId")',
     'CREATE INDEX IF NOT EXISTS "Customer_createdAt_idx" ON "Customer"("createdAt")',
+    'CREATE INDEX IF NOT EXISTS "Ledger_field_idx" ON "Ledger"("field")',
+    'CREATE INDEX IF NOT EXISTS "BeanBatch_expired_idx" ON "BeanBatch"("expired")',
+    'CREATE INDEX IF NOT EXISTS "Payment_storeId_idx" ON "Payment"("storeId")',
+    'CREATE INDEX IF NOT EXISTS "Payment_operatorId_idx" ON "Payment"("operatorId")',
   ];
   for (const sql of indexes) {
     try { await prisma!.$executeRawUnsafe(sql); } catch { /* index already exists */ }
@@ -82,7 +88,9 @@ export async function initLocalDb(): Promise<PrismaClient> {
     return prisma!.store.count();
   });
   if (storeCount === 0) {
-    await runSeed(prisma);
+    // includeSettings:false — 新设备的种子不覆盖 Setting 表，避免把后台已改的
+    // 全局设置（如豆有效期开关）在首次同步后被本地种子值顶掉。
+    await runSeed(prisma, { includeSettings: false });
   }
   // Bean expiry sweep (idempotent):核销已过期批次，写 EXPIRE ledger + 置 expired。
   // 与服务器启动一致；ledger id 派生自 batchId，append-only 去重，两端都跑不会重复。

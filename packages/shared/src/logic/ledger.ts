@@ -17,13 +17,14 @@ export function sumLedger(ledgers: Ledger[]): { balanceCents: number; beans: num
 }
 
 // Spendable beans = sum of remaining across non-expired, non-empty batches.
-// A batch is "expired" if expired flag set OR expiresAt < now.
+// A batch is "expired" if expired flag set OR expiresAt <= now (same boundary
+// as dueForExpiry / selectFIFOConsume — expiresAt exactly == now is expired).
 export function spendableBeans(batches: BeanBatch[], now: Date = new Date()): number {
   let total = 0;
   for (const b of batches) {
     if (b.expired) continue;
     if (b.remaining <= 0) continue;
-    if (b.expiresAt && new Date(b.expiresAt) < now) continue;
+    if (b.expiresAt && new Date(b.expiresAt) <= now) continue;
     total += b.remaining;
   }
   return total;

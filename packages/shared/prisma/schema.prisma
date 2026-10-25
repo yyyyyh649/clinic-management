@@ -47,6 +47,9 @@ model Device {
   boundAt     DateTime @default(now())
   lastSyncAt  DateTime?
   appVersion  String?
+  // Sync credential issued at registration (or lazily on first push/pull after
+  // upgrade). push/pull must present it; never synced itself.
+  token       String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -102,6 +105,7 @@ model Customer {
   @@index([phone])
   @@index([name])
   @@index([memberId])
+  @@index([createdAt])
 }
 
 model PhoneHistory {
@@ -185,6 +189,8 @@ model Member {
 
   @@index([cardNo])
   @@index([status])
+  @@index([registeredAt])
+  @@index([registeredStoreId])
 }
 
 // ---------- Ledger: append-only source of truth for balance / beans / points ----------
@@ -218,9 +224,11 @@ model Ledger {
   origin     String   @default("CLIENT") // "CLIENT" | "SERVER"
 
   @@index([memberId, field])
+  @@index([field])
   @@index([createdAt])
   @@index([syncStatus])
   @@index([beanBatchId])
+  @@index([refType, refId])
 }
 
 // ---------- Bean batches (for FIFO expiry consumption) ----------
@@ -241,6 +249,7 @@ model BeanBatch {
   expired   Boolean  @default(false)
 
   @@index([memberId, expiresAt])
+  @@index([expired])
 }
 
 // ---------- Exam record ----------
@@ -299,6 +308,7 @@ model ExamRecord {
   @@index([reviewStatus])
   @@index([reviewDate])
   @@index([registeredStoreId])
+  @@index([registeredBy])
   @@index([dept])
   @@index([revisesExamId])
 }
@@ -342,10 +352,11 @@ model Payment {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@index([examId])
   @@index([payForMemberId])
   @@index([awardMemberId])
   @@index([createdAt])
+  @@index([storeId])
+  @@index([operatorId])
 }
 
 // ---------- Recharge (充值): tracks cash received vs balance/beans added ----------

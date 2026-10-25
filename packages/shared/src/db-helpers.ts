@@ -124,6 +124,18 @@ export async function loadMemberDetail(prisma: PrismaClient, memberId: string) {
       ? (cashPaidByRechargeId.get(l.refId) ?? 0)
       : 0,
   }));
+  // Reconcile beanBatches.remaining from the append-only Ledger so the 豆到期
+  // 提醒 (which reads batch.remaining) stays consistent with balances.
+  // spendableBeans (shown as 可用豆) already rebuilds from Ledger inside
+  // computeBalances; without this the raw stored counter — which LWW sync
+  // merge can inflate — could make the expiry reminder show more beans than
+  // are actually spendable.
+  // NOTE: must use the member's FULL bean-ledger history — the displayed
+  // ledgers above are truncated to 500 rows and would undercount consumption
+  // for long-standing members (inflating remaining).
+  const allBeanLedgers = await prisma.ledger.findMany({
+    where: { memberId, field: LEDGER_FIELD.BEANS },
+  });
   return {
     member,
     customer: member.customer,
@@ -132,15 +144,9 @@ export async function loadMemberDetail(prisma: PrismaClient, memberId: string) {
     exams,
     usagePayments,
     ledgers: ledgersWithCash,
-    // Reconcile beanBatches.remaining from the append-only Ledger so the 豆到期
-    // 提醒 (which reads batch.remaining) stays consistent with balances.
-    // spendableBeans (shown as 可用豆) already rebuilds from Ledger inside
-    // computeBalances; without this the raw stored counter — which LWW sync
-    // merge can inflate — could make the expiry reminder show more beans than
-    // are actually spendable.
     beanBatches: recomputeBatchesFromLedger(
       member.beanBatches as any,
-      member.ledgers.filter((l) => l.field === LEDGER_FIELD.BEANS) as any,
+      allBeanLedgers as any,
     ),
   };
 }

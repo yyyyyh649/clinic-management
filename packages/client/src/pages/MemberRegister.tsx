@@ -6,8 +6,14 @@ import { api } from '../api';
 import { Button, Card, Field, Input, Modal, Badge, fmtCents, parseYuanToCents } from '../components/ui';
 import { PhoneInput, isPhoneValid } from '../components/PhoneInput';
 
-const todayStr = () => new Date().toISOString().slice(0, 10);
-const yesterdayStr = () => { const d = new Date(); d.setDate(d.getDate() - 1); return d.toISOString().slice(0, 10); };
+// 本地时区日期（YYYY-MM-DD）。不能用 toISOString()——它转 UTC，
+// 本地 08:00 前会切到前一天，生日默认值/max 都会偏。
+const localDateStr = (d: Date) => {
+  const dd = new Date(d);
+  dd.setMinutes(dd.getMinutes() - dd.getTimezoneOffset());
+  return dd.toISOString().slice(0, 10);
+};
+const yesterdayStr = () => { const d = new Date(); d.setDate(d.getDate() - 1); return localDateStr(d); };
 
 export default function MemberRegister() {
   const nav = useNavigate();
@@ -135,7 +141,7 @@ export default function MemberRegister() {
             <Input value={form.cardNo} onChange={(e) => set('cardNo', e.target.value)} />
           </Field>
           <Field label="生日" required hint="不能选今天及以后">
-            <Input type="date" max={todayStr()} value={form.birthday} onChange={(e) => set('birthday', e.target.value)} />
+            <Input type="date" max={yesterdayStr()} value={form.birthday} onChange={(e) => set('birthday', e.target.value)} />
           </Field>
           <Field label="住址（可选）">
             <Input value={form.address} onChange={(e) => set('address', e.target.value)} />

@@ -11,6 +11,7 @@
 //   BACKEND -> 后台登录 + 新设备绑定
 //   CHANGE  -> 修改历史/敏感信息二次确认
 import bcrypt from 'bcryptjs';
+import crypto from 'node:crypto';
 import type { PrismaClient } from '@clinic/shared';
 
 export const PASSWORD_KEY = {
@@ -57,6 +58,21 @@ export async function verifyPassword(prisma: PrismaClient, key: PasswordKey, pla
   if (!row) return false;
   return bcrypt.compare(plaintext, row.hash);
 }
+
+// Session fingerprint: sha256 of the current BACKEND hash. Session tokens are
+// signed with it (see config.ts), so a password change rotates the fingerprint
+// and invalidates all outstanding tokens without any session table.
+// Cached 60s to avoid a DB read on every authenticated request; the cache is
+// invalidated explicitly on password change.
+let fpCache: { value: string; at: number } | null = null;
+export async function backendFingerprint(prisma: PrismaClient): Promise<string> {
+  if (fpCache && Date.now() - fpCache.at < 60_000) return fpCache.value;
+  const row = await prisma.password.findUnique({ where: { key: PASSWORD_KEY.BACKEND } });
+  const value = crypto.createHash('sha256').update(row?.hash || 'unset').digest('hex');
+  fpCache = { value, at: Date.now() };
+  return value;
+}
+export function invalidateFingerprintCache(): void { fpCache = null; }
 
 export async function changePassword(
   prisma: PrismaClient,

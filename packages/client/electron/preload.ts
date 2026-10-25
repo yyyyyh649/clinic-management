@@ -10,6 +10,7 @@ const calls = [
   'createExam', 'getExam', 'listExams', 'updateReview', 'voidExam', 'updateExam', 'verifyChange',
   'createPayment', 'createRecharge',
   'getStaff', 'getTiers', 'getTemplates', 'getBrands', 'getStores', 'getSettings',
+  'getReminderCounts',
 ] as const;
 
 const api: Record<string, (...args: any[]) => any> = {};

@@ -8,14 +8,15 @@ import {
   type BeanExpirySetting,
 } from '@clinic/shared';
 import {
-  loadMemberDetail, loadBalances, computeAge, memberDaysSince, isPendingReview, reviewDaysRemaining,
+  loadMemberDetail, computeBalances, computeAge, memberDaysSince, isPendingReview, reviewDaysRemaining,
 } from '@clinic/shared';
 import { verifyPassword, PASSWORD_KEY } from '../passwords.js';
+import { ah } from '../util.js';
 
 export const memberRouter = Router();
 
 // ---------- Customer dedup (used by registration) ----------
-memberRouter.get('/customers/dedup', async (req, res) => {
+memberRouter.get('/customers/dedup', ah(async (req, res) => {
   const phone = String(req.query.phone || '');
   const name = String(req.query.name || '');
   if (!phone) return res.json({ found: false });
@@ -25,10 +26,10 @@ memberRouter.get('/customers/dedup', async (req, res) => {
   if (exact) return res.json({ found: true, mode: 'reuse', customer: exact });
   // phone exists but name differs → conflict (may be a family sharing one phone)
   return res.json({ found: true, mode: 'conflict', customers });
-});
+}));
 
 // Search customers/members by name/phone/card-no (for 代付 etc.)
-memberRouter.get('/search', async (req, res) => {
+memberRouter.get('/search', ah(async (req, res) => {
   const q = String(req.query.q || '').trim();
   if (!q) return res.json({ items: [] });
   const byCard = req.query.byCard === '1';
@@ -46,10 +47,10 @@ memberRouter.get('/search', async (req, res) => {
     take: 30,
   });
   res.json({ items: members });
-});
+}));
 
 // ---------- Member list (filters + 待复查置顶 + 最新登记倒序) ----------
-memberRouter.get('/', async (req, res) => {
+memberRouter.get('/', ah(async (req, res) => {
   const { tier: tierLevel, storeId, dateFrom, dateTo } = req.query as Record<string, string>;
   const ageMin = req.query.ageMin ? Number(req.query.ageMin) : undefined;
   const ageMax = req.query.ageMax ? Number(req.query.ageMax) : undefined;
@@ -58,8 +59,9 @@ memberRouter.get('/', async (req, res) => {
   if (storeId) where.registeredStoreId = storeId;
   if (dateFrom || dateTo) {
     where.registeredAt = {};
-    if (dateFrom) where.registeredAt.gte = new Date(dateFrom);
-    if (dateTo) where.registeredAt.lte = new Date(dateTo + 'T23:59:59');
+    // 显式东八区边界，不依赖服务器本地时区。
+    if (dateFrom) where.registeredAt.gte = new Date(dateFrom + 'T00:00:00.000+08:00');
+    if (dateTo) where.registeredAt.lte = new Date(dateTo + 'T23:59:59.999+08:00');
   }
 
   const members = await prisma.member.findMany({
@@ -71,20 +73,39 @@ memberRouter.get('/', async (req, res) => {
   const tiers = await prisma.tierRule.findMany({ orderBy: { minPoints: 'asc' } });
   const now = new Date();
 
+  // Batch-load per-member enrichment data (no N+1):
+  // - bean batches for spendableBeans (ledgers already included above)
+  // - due-review exams for the 待复查 flag (one query for all customers)
+  const memberIds = members.map((m) => m.id);
+  const customerIds = [...new Set(members.map((m) => m.customerId).filter(Boolean))] as string[];
+  const [allBatches, dueExams] = await Promise.all([
+    memberIds.length
+      ? prisma.beanBatch.findMany({ where: { memberId: { in: memberIds } } })
+      : Promise.resolve([]),
+    customerIds.length
+      ? prisma.examRecord.findMany({
+          where: {
+            customerId: { in: customerIds }, deletedAt: null, voidedAt: null,
+            reviewStatus: { in: ['PENDING', 'CONTACTED'] },
+            reviewDate: { lte: new Date(now.getTime() + 7 * 86400000) },
+          },
+          select: { customerId: true },
+        })
+      : Promise.resolve([]),
+  ]);
+  const batchesByMember = new Map<string, (typeof allBatches)[number][]>();
+  for (const b of allBatches) {
+    const arr = batchesByMember.get(b.memberId);
+    if (arr) arr.push(b); else batchesByMember.set(b.memberId, [b]);
+  }
+  const pendingCustomerIds = new Set(dueExams.map((e) => e.customerId));
+
   // Enrich with balances, tier, age, pending-review flag, days-since-register.
-  let rows = await Promise.all(members.map(async (m) => {
-    const bal = await loadBalances(prisma, m.id, now);
+  let rows = members.map((m) => {
+    const bal = computeBalances(m.ledgers as any, (batchesByMember.get(m.id) || []) as any, now);
     const tier = computeTier(bal.points, tiers as any);
     const age = computeAge(m.customer?.birthday);
-    // pending review: any exam (cross-store) due & not closed
-    const dueExam = await prisma.examRecord.findFirst({
-      where: {
-        customerId: m.customerId, deletedAt: null,
-        reviewStatus: { in: ['PENDING', 'CONTACTED'] },
-        reviewDate: { lte: new Date(now.getTime() + 7 * 86400000) },
-      },
-    });
-    const pendingReview = !!dueExam;
+    const pendingReview = pendingCustomerIds.has(m.customerId);
     return {
       id: m.id, cardNo: m.cardNo, name: m.customer?.name, phone: m.customer?.phone,
       birthday: m.customer?.birthday, age,
@@ -95,7 +116,7 @@ memberRouter.get('/', async (req, res) => {
       registeredStoreId: m.registeredStoreId,
       pendingReview,
     };
-  }));
+  });
 
   // tier filter (after computing tier) + age filter
   if (tierLevel) rows = rows.filter((r) => r.tierLevel === Number(tierLevel));
@@ -109,19 +130,19 @@ memberRouter.get('/', async (req, res) => {
   });
 
   res.json({ items: rows });
-});
+}));
 
 // ---------- Member detail ----------
-memberRouter.get('/:id', async (req, res) => {
+memberRouter.get('/:id', ah(async (req, res) => {
   const detail = await loadMemberDetail(prisma, req.params.id);
   if (!detail) return res.status(404).json({ error: '会员不存在' });
   const tiers = await prisma.tierRule.findMany({ orderBy: { minPoints: 'asc' } });
   const tier = computeTier(detail.balances.points, tiers as any);
   res.json({ ...detail, tier, age: computeAge(detail.customer?.birthday) });
-});
+}));
 
 // ---------- Register member ----------
-memberRouter.post('/', async (req, res) => {
+memberRouter.post('/', ah(async (req, res) => {
   const {
     name, phone, cardNo, birthday, address, registeredById, registeredByName,
     registeredStoreId, registeredStoreName, registeredDeviceId,
@@ -232,23 +253,32 @@ memberRouter.post('/', async (req, res) => {
   });
 
   res.json(await loadMemberDetail(prisma, result.id));
-});
+}));
 
 // ---------- Edit member info (phone change -> PhoneHistory) ----------
-memberRouter.put('/:id', async (req, res) => {
+memberRouter.put('/:id', ah(async (req, res) => {
   const { name, phone, address, birthday, changePassword: cp } = req.body || {};
   const member = await prisma.member.findUnique({ where: { id: req.params.id }, include: { customer: true } });
   if (!member) return res.status(404).json({ error: '会员不存在' });
+  const customer = member.customer!;
 
   // Changing name/phone/birthday counts as 敏感信息修改 -> requires CHANGE password + 二次确认 (client handles 二次)
-  const touchingSensitive = phone !== undefined && phone !== member.customer.phone;
+  const asTime = (d: any): number | null => {
+    if (d === undefined || d === null) return null;
+    const t = new Date(d).getTime();
+    return Number.isNaN(t) ? null : t;
+  };
+  const nameChanged = name !== undefined && name !== customer.name;
+  const phoneChanged = phone !== undefined && phone !== customer.phone;
+  // birthday 是 Date，先规范化成时间戳再比较。
+  const birthdayChanged = birthday !== undefined && asTime(birthday) !== asTime(customer.birthday);
+  const touchingSensitive = nameChanged || phoneChanged || birthdayChanged;
   if (touchingSensitive) {
     const ok = await verifyPassword(prisma, PASSWORD_KEY.CHANGE, cp || '');
-    if (!ok) return res.status(403).json({ error: '修改手机号需要敏感信息修改密码验证通过' });
+    if (!ok) return res.status(403).json({ error: '修改姓名/手机号/生日需要敏感信息修改密码验证通过' });
   }
 
-  const customer = member.customer!;
-  if (touchingSensitive) {
+  if (phoneChanged) {
     await prisma.phoneHistory.create({
       data: {
         id: uuid(), customerId: customer.id, oldPhone: customer.phone, newPhone: phone,
@@ -259,13 +289,13 @@ memberRouter.put('/:id', async (req, res) => {
   }
   const updated = await prisma.customer.update({
     where: { id: customer.id },
-    data: { name, phone: touchingSensitive ? phone : undefined, address, birthday: birthday ? new Date(birthday) : undefined },
+    data: { name, phone: phoneChanged ? phone : undefined, address, birthday: birthday ? new Date(birthday) : undefined },
   });
   res.json({ ok: true });
-});
+}));
 
 // ---------- Adjust balance / beans / points (Ledger 增量, reason required) ----------
-memberRouter.post('/:id/ledger', async (req, res) => {
+memberRouter.post('/:id/ledger', ah(async (req, res) => {
   const { field, delta, reason, operatorId, operatorName, storeId, storeName, deviceId, cashPaidCents = 0 } = req.body || {};
   if (!field || delta === undefined) return res.status(400).json({ error: '字段和增减量必填' });
   if (!reason || !reason.trim()) return res.status(400).json({ error: '必须填写备注原因' });
@@ -333,17 +363,17 @@ memberRouter.post('/:id/ledger', async (req, res) => {
   const { recomputeAnomalies } = await import('../anomaly.js');
   await recomputeAnomalies([memberId]);
   res.json(entry);
-});
+}));
 
 // ---------- 代付 usage records for a member card ----------
-memberRouter.get('/:id/usage', async (req, res) => {
+memberRouter.get('/:id/usage', ah(async (req, res) => {
   const payments = await prisma.payment.findMany({
     where: { payForMemberId: req.params.id },
     orderBy: { createdAt: 'desc' },
     include: { exam: true },
   });
   res.json({ items: payments });
-});
+}));
 
 // ---------- Bean expiry setting helper ----------
 export async function loadBeanExpirySetting(): Promise<BeanExpirySetting> {

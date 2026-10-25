@@ -47,10 +47,52 @@ export interface PaymentResult {
 
 export class PaymentError extends Error {}
 
+function assertFiniteNonNeg(n: unknown, label: string): asserts n is number {
+  if (typeof n !== 'number' || !Number.isFinite(n) || n < 0) {
+    throw new PaymentError(`${label}无效`);
+  }
+}
+
+// Award override ceiling: manual awards may exceed the default (promotions),
+// but not by an unbounded amount — 100豆=1元, an unbounded override is printing money.
+const AWARD_OVERRIDE_MIN_CAP = 1000; // headroom floor: 1000豆 (=10元) even for 0-cash payments
+const AWARD_OVERRIDE_MULTIPLIER = 10;
+
 export async function executePayment(prisma: PrismaClient, input: PaymentInput): Promise<PaymentResult> {
+  // ---- input validation (this service is the shared trust boundary for both
+  // server routes and client IPC — never assume the caller already checked) ----
+  assertFiniteNonNeg(input.balanceDeductCents, '余额抵扣金额');
+  assertFiniteNonNeg(input.cashPaidCents, '实付现金金额');
+  if (typeof input.beansDeductCount !== 'number' || !Number.isFinite(input.beansDeductCount)
+    || !Number.isInteger(input.beansDeductCount) || input.beansDeductCount < 0) {
+    throw new PaymentError('豆抵扣数量无效');
+  }
+  if (input.discountType === DISCOUNT_TYPE.PERCENT) {
+    const v = input.discountValue;
+    if (typeof v !== 'number' || !Number.isFinite(v) || !Number.isInteger(v) || v < 1 || v > 100) {
+      throw new PaymentError('折扣必须是 1-100 的整数');
+    }
+  } else if (input.discountType === DISCOUNT_TYPE.MINUS) {
+    assertFiniteNonNeg(input.discountValue ?? 0, '立减金额');
+  }
+  if (input.beansAwardedOverride !== undefined) {
+    if (!Number.isFinite(input.beansAwardedOverride) || !Number.isInteger(input.beansAwardedOverride) || input.beansAwardedOverride < 0) {
+      throw new PaymentError('发放豆数量无效');
+    }
+  }
+  if (input.pointsAwardedOverride !== undefined) {
+    if (!Number.isFinite(input.pointsAwardedOverride) || !Number.isInteger(input.pointsAwardedOverride) || input.pointsAwardedOverride < 0) {
+      throw new PaymentError('发放积分数量无效');
+    }
+  }
+
   const exam = await prisma.examRecord.findUnique({ where: { id: input.examId }, include: { customer: true, payment: true } });
   if (!exam) throw new PaymentError('检查记录不存在');
   if (exam.payment) throw new PaymentError('该检查记录已支付');
+  // Voided drafts / discarded revisions / recycled records must never take money.
+  if (exam.voidedAt || exam.discardedAt || exam.deletedAt) {
+    throw new PaymentError('该检查单已作废/废弃，不能支付');
+  }
 
   // E: the operator for a payment (and every ledger it produces) is ALWAYS the
   // exam's registrar — registration, exam, review and payment are done by the
@@ -71,24 +113,49 @@ export async function executePayment(prisma: PrismaClient, input: PaymentInput):
   if (input.discountType === DISCOUNT_TYPE.PERCENT && input.discountValue != null) {
     afterDiscount = Math.round((baseAmount * input.discountValue) / 100);
   } else if (input.discountType === DISCOUNT_TYPE.MINUS && input.discountValue != null) {
+    if (input.discountValue > baseAmount) throw new PaymentError('立减金额不能超过应付金额');
     afterDiscount = Math.max(0, baseAmount - input.discountValue);
   }
 
-  // 3. beans must be multiple of 100
+  // 3. beans must be a non-negative multiple of 100
   if (input.beansDeductCount % BEAN_REDEEM_MULTIPLE !== 0) {
     throw new PaymentError('豆抵现必须整百使用');
   }
   const beansDeductAmount = input.beansDeductCount; // 1豆=1分
-  const balanceDeduct = Math.max(0, input.balanceDeductCents);
+  const balanceDeduct = input.balanceDeductCents;
 
   // 4. source member for balance/beans
-  let sourceMemberId = input.payForMemberId || (exam.customer?.isMember ? exam.customer?.memberId : null) || null;
+  const ownMemberId = exam.customer?.isMember ? exam.customer?.memberId : null;
+  let sourceMemberId = input.payForMemberId || ownMemberId || null;
   if ((balanceDeduct > 0 || input.beansDeductCount > 0) && !sourceMemberId) {
     throw new PaymentError('使用余额/豆抵扣需要指定会员（本客户为会员或选择代付会员）');
   }
+  // Genuine 代付 only: paying with someone ELSE's card. Paying with the
+  // customer's own card is not recorded as 代付 (keeps 代付记录 clean).
+  const isProxyPay = !!input.payForMemberId && input.payForMemberId !== ownMemberId;
 
-  // 5. expected cash
-  const expectedCashPaid = Math.max(0, afterDiscount - balanceDeduct - beansDeductAmount);
+  // 5. expected cash — §2.2 revision chain: payments on earlier versions
+  // already collected money for this business transaction; the revision only
+  // settles the remaining difference (prevents double-charging the full amount).
+  let alreadyCollected = 0;
+  {
+    const seen = new Set<string>([exam.id]);
+    let cursor = exam.revisesExamId;
+    while (cursor && !seen.has(cursor)) {
+      seen.add(cursor);
+      const prev = await prisma.examRecord.findUnique({ where: { id: cursor }, include: { payment: true } });
+      if (!prev) break;
+      if (prev.payment) {
+        alreadyCollected += prev.payment.cashPaid + prev.payment.balanceDeduct + prev.payment.beansDeductAmount;
+      }
+      cursor = prev.revisesExamId;
+    }
+  }
+  const dueAmount = Math.max(0, afterDiscount - alreadyCollected);
+  if (balanceDeduct + beansDeductAmount > dueAmount) {
+    throw new PaymentError('抵扣合计超过应付金额');
+  }
+  const expectedCashPaid = Math.max(0, dueAmount - balanceDeduct - beansDeductAmount);
   const cashPaid = input.cashPaidCents;
   if (cashPaid !== expectedCashPaid) {
     if (!input.cashPaidEdited || !input.editReason || !input.editReason.trim()) {
@@ -96,9 +163,14 @@ export async function executePayment(prisma: PrismaClient, input: PaymentInput):
     }
   }
 
-  // 6. awards
-  const beansAwarded = input.beansAwardedOverride ?? Math.floor(cashPaid / 100); // 1元=1豆
+  // 6. awards (bounded manual override)
+  const defaultBeans = Math.max(0, Math.floor(cashPaid / 100)); // 1元=1豆
+  const beansAwarded = input.beansAwardedOverride ?? defaultBeans;
   const pointsAwarded = input.pointsAwardedOverride ?? beansAwarded;
+  const awardCap = Math.max(defaultBeans * AWARD_OVERRIDE_MULTIPLIER, AWARD_OVERRIDE_MIN_CAP);
+  if (beansAwarded > awardCap || pointsAwarded > awardCap) {
+    throw new PaymentError(`手工发放豆/积分超过上限（本次最多 ${awardCap}）`);
+  }
 
   // 7. award target
   let awardMemberId = input.awardMemberId || (operatorMemberId ? operatorMemberId : null);
@@ -168,7 +240,9 @@ export async function executePayment(prisma: PrismaClient, input: PaymentInput):
         afterDiscount, balanceDeduct, beansDeduct: input.beansDeductCount, beansDeductAmount,
         cashPaid, cashPaidEdited: input.cashPaidEdited, editReason: input.editReason || null,
         beansAwarded, pointsAwarded,
-        payForMemberId: sourceMemberId, payForMemberName: srcMember?.customer?.name, payForMemberCardNo: srcMember?.cardNo,
+        payForMemberId: isProxyPay ? sourceMemberId : null,
+        payForMemberName: isProxyPay ? srcMember?.customer?.name : null,
+        payForMemberCardNo: isProxyPay ? srcMember?.cardNo : null,
         awardMemberId: awardMemberId, awardMemberName: awardMember?.customer?.name,
         operatorId, operatorName,
         storeId: input.storeId, storeName: input.storeName, deviceId: input.deviceId,
@@ -224,6 +298,16 @@ export interface RechargeInput {
 }
 
 export async function executeRecharge(prisma: PrismaClient, input: RechargeInput) {
+  // ---- input validation ----
+  assertFiniteNonNeg(input.cashPaidCents, '充值现金金额');
+  assertFiniteNonNeg(input.balanceAddedCents, '入账金额');
+  if (input.beansGifted !== undefined && (!Number.isFinite(input.beansGifted) || !Number.isInteger(input.beansGifted) || input.beansGifted < 0)) {
+    throw new PaymentError('赠送豆数量无效');
+  }
+  if (input.pointsGifted !== undefined && (!Number.isFinite(input.pointsGifted) || !Number.isInteger(input.pointsGifted) || input.pointsGifted < 0)) {
+    throw new PaymentError('赠送积分数量无效');
+  }
+
   const member = await prisma.member.findUnique({ where: { id: input.memberId }, include: { customer: true } });
   if (!member) throw new PaymentError('会员不存在');
   const rechargeId = uuid();

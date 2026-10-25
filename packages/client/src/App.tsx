@@ -27,7 +27,15 @@ function SyncIndicator() {
   const allSynced = online && s.pending === 0;
   const last = s.lastSyncAt ? new Date(s.lastSyncAt) : null;
   const ageMin = last ? Math.max(0, Math.floor((Date.now() - last.getTime()) / 60000)) : null;
-  const ageLabel = ageMin === null ? '未同步' : ageMin === 0 ? '刚刚' : ageMin < 60 ? `${ageMin}分钟前` : `${Math.floor(ageMin / 60)}小时前`;
+  const ageLabel = ageMin === null
+    ? '未同步'
+    : ageMin === 0
+      ? '刚刚'
+      : ageMin < 60
+        ? `${ageMin}分钟前`
+        : ageMin < 24 * 60
+          ? `${Math.floor(ageMin / 60)}小时前`
+          : `${Math.floor(ageMin / (24 * 60))}天前`;
   return (
     <div className="flex items-center gap-1.5 text-xs">
       <span className={`inline-block h-2 w-2 rounded-full ${allSynced ? 'bg-emerald-500' : online ? 'bg-amber-500' : 'bg-rose-500'}`} />

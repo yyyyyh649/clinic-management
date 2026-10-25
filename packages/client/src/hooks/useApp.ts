@@ -63,13 +63,25 @@ export function useSyncStatus(): SyncStatus {
   return status;
 }
 
-// In Electron there is no global reminders endpoint; compute locally.
+// 全局提醒红点（今日生日 + 待复查）。Electron 下走主进程的轻量聚合 IPC
+//（getReminderCounts），不再每分钟全量拉 listMembers + listExams。
+// 浏览器 fallback 没有该方法时保留旧的全量拉取逻辑。
 export function useReminders() {
   const [r, setR] = useState<Reminders>({ birthdayToday: 0, reviewDue: 0 });
   useEffect(() => {
     let cancelled = false;
+    const getCounts = (window as any).clinic?.getReminderCounts as undefined | (() => Promise<Reminders>);
     const compute = async () => {
+      // 页面隐藏（最小化/切后台标签）时跳过本轮轮询。
+      if (typeof document !== 'undefined' && document.hidden) return;
       try {
+        if (getCounts) {
+          const counts = await getCounts();
+          if (!cancelled) setR({ birthdayToday: counts?.birthdayToday ?? 0, reviewDue: counts?.reviewDue ?? 0 });
+          return;
+        }
+        if (isElectron) return; // Electron 但 preload 过旧没有该方法：静默置 0，不报错
+        // 浏览器 fallback：保留原逻辑（全量拉取后在内存聚合）。
         const [members, exams] = await Promise.all([
           api.listMembers({}).catch(() => ({ items: [] })),
           api.listExams({}).catch(() => ({ items: [] })),

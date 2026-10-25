@@ -16,6 +16,8 @@ export default function ExamDetail() {
   const [reviewerId, setReviewerId] = useState('');
   const [note, setNote] = useState('');
   const [voiding, setVoiding] = useState(false);
+  const [savingReview, setSavingReview] = useState(false);
+  const [reviewErr, setReviewErr] = useState('');
   const [editPwd, setEditPwd] = useState('');
   const [editModal, setEditModal] = useState(false);
   const [editBusy, setEditBusy] = useState(false);
@@ -52,10 +54,18 @@ export default function ExamDetail() {
   useEffect(() => { load(); api.getStaff().then((s: any) => setStaff(s || [])); /* eslint-disable-next-line */ }, [id]);
 
   async function saveReview() {
-    if (!id) return;
-    const rev = staff.find((s) => s.id === reviewerId);
-    await api.updateReview(id, { reviewStatus: status, reviewerId, reviewerName: rev?.name || '', reviewNote: note });
-    await load();
+    if (!id || savingReview) return; // busy 态防连点
+    setSavingReview(true);
+    setReviewErr('');
+    try {
+      const rev = staff.find((s) => s.id === reviewerId);
+      await api.updateReview(id, { reviewStatus: status, reviewerId, reviewerName: rev?.name || '', reviewNote: note });
+      await load();
+    } catch (e: any) {
+      setReviewErr(e.message || '保存复查失败');
+    } finally {
+      setSavingReview(false);
+    }
   }
 
   async function voidDraft() {
@@ -74,7 +84,7 @@ export default function ExamDetail() {
 
   if (!data) return <div className="text-sm text-ink-500">加载中…</div>;
   const { exam, customer, history, revisedBy } = data;
-  const reviewerCandidates = staff.filter((s) => s.depts?.split(',').includes(exam.dept));
+  const reviewerCandidates = staff.filter((s) => s.depts?.split(',').map((d: string) => d.trim()).includes(exam.dept));
   const pay = exam.payment;
 
   return (
@@ -203,7 +213,8 @@ export default function ExamDetail() {
             <input className="input" value={note} onChange={(e) => setNote(e.target.value)} />
           </Field>
         </div>
-        <div className="mt-3 flex justify-end"><Button onClick={saveReview}>保存复查</Button></div>
+        {reviewErr && <div className="mt-3 rounded-md bg-rose-50 px-3 py-2 text-sm text-rose-700">{reviewErr}</div>}
+        <div className="mt-3 flex justify-end"><Button disabled={savingReview} onClick={saveReview}>{savingReview ? '保存中…' : '保存复查'}</Button></div>
       </Card>
 
       <Card title="该客户历史检查记录（关联 customer_id，跨门店）">

@@ -70,37 +70,43 @@ export async function createExam(prisma: PrismaClient, input: CreateExamInput) {
   if (!name || !phone || !dept || !registeredById) throw new ExamError('姓名、手机号、部门、登记人必填');
   if (dept === DEPT.OPTICAL && (lensPrice == null || framePrice == null)) throw new ExamError('配镜部镜片和镜架价格必填');
   if (dept === DEPT.EYE && totalAmount == null) throw new ExamError('眼科部总金额必填');
-
-  // dedup customer by phone (reuse if phone+name match)
-  let customer = customerId ? await prisma.customer.findUnique({ where: { id: customerId } }) : null;
-  if (!customer) {
-    const existing = await prisma.customer.findFirst({ where: { phone, name } });
-    customer = existing ?? await prisma.customer.create({
-      data: {
-        id: uuid(), name, phone, birthday: birthday ? new Date(birthday) : null, address,
-        createdByStaffId: registeredById, createdByStoreId: registeredStoreId, createdByDeviceId: registeredDeviceId,
-      },
-    });
+  for (const [label, v] of [['镜片价格', lensPrice], ['镜架价格', framePrice], ['总金额', totalAmount]] as const) {
+    if (v != null && (!Number.isFinite(Number(v)) || Number(v) < 0)) throw new ExamError(`${label}不能为负数`);
   }
 
-  const baseAmount = dept === DEPT.OPTICAL ? (Number(lensPrice) || 0) + (Number(framePrice) || 0) : (Number(totalAmount) || 0);
-  const review = reviewDate ? new Date(reviewDate) : new Date(Date.now() + DEFAULT_REVIEW_DAYS * 86400000);
-  const regAt = registeredAt ? new Date(registeredAt) : new Date();
+  const created = await prisma.$transaction(async (tx) => {
+    // dedup customer by phone (reuse if phone+name match)
+    let customer = customerId ? await tx.customer.findUnique({ where: { id: customerId } }) : null;
+    if (!customer) {
+      const existing = await tx.customer.findFirst({ where: { phone, name } });
+      customer = existing ?? await tx.customer.create({
+        data: {
+          id: uuid(), name, phone, birthday: birthday ? new Date(birthday) : null, address,
+          createdByStaffId: registeredById, createdByStoreId: registeredStoreId, createdByDeviceId: registeredDeviceId,
+        },
+      });
+    }
 
-  return prisma.examRecord.create({
-    data: {
-      id: uuid(), customerId: customer.id, dept, templateId: templateId || null, templateName: templateName || null,
-      content: content ? JSON.stringify(content) : null,
-      lensBrand: lensBrand || null, lensPrice: dept === DEPT.OPTICAL ? Number(lensPrice) : null,
-      frameBrand: frameBrand || null, framePrice: dept === DEPT.OPTICAL ? Number(framePrice) : null,
-      totalAmount: dept === DEPT.EYE ? Number(totalAmount) : null,
-      baseAmount,
-      reviewDate: review, reviewerId: reviewerId || null, reviewerName: reviewerName || null, reviewStatus: 'PENDING', reviewNote: reviewNote || null,
-      registeredBy: registeredById, registeredByName: registeredByName || '',
-      registeredStoreId, registeredStoreName: registeredStoreName || '', registeredDeviceId: registeredDeviceId || '',
-      registeredAt: regAt,
-    },
+    const baseAmount = dept === DEPT.OPTICAL ? (Number(lensPrice) || 0) + (Number(framePrice) || 0) : (Number(totalAmount) || 0);
+    const review = reviewDate ? new Date(reviewDate) : new Date(Date.now() + DEFAULT_REVIEW_DAYS * 86400000);
+    const regAt = registeredAt ? new Date(registeredAt) : new Date();
+
+    return tx.examRecord.create({
+      data: {
+        id: uuid(), customerId: customer.id, dept, templateId: templateId || null, templateName: templateName || null,
+        content: content ? JSON.stringify(content) : null,
+        lensBrand: lensBrand || null, lensPrice: dept === DEPT.OPTICAL ? Number(lensPrice) : null,
+        frameBrand: frameBrand || null, framePrice: dept === DEPT.OPTICAL ? Number(framePrice) : null,
+        totalAmount: dept === DEPT.EYE ? Number(totalAmount) : null,
+        baseAmount,
+        reviewDate: review, reviewerId: reviewerId || null, reviewerName: reviewerName || null, reviewStatus: 'PENDING', reviewNote: reviewNote || null,
+        registeredBy: registeredById, registeredByName: registeredByName || '',
+        registeredStoreId, registeredStoreName: registeredStoreName || '', registeredDeviceId: registeredDeviceId || '',
+        registeredAt: regAt,
+      },
+    });
   });
+  return created;
 }
 
 // ---------- Detail + customer's full history ----------
@@ -119,10 +125,12 @@ export async function getExamDetail(prisma: PrismaClient, id: string) {
     orderBy: { registeredAt: 'desc' },
   });
   // §2.4: if this record was superseded, find the newer revision for the banner link.
+  // (oldest first = the direct successor if multiple revisions exist)
   let revisedBy: { id: string; createdAt: Date } | null = null;
   if (exam.discardedAt) {
     const newer = await prisma.examRecord.findFirst({
       where: { revisesExamId: exam.id }, select: { id: true, createdAt: true },
+      orderBy: { createdAt: 'asc' },
     });
     if (newer) revisedBy = newer;
   }
@@ -266,6 +274,11 @@ export interface UpdateExamInput {
 export async function updateExam(prisma: PrismaClient, id: string, input: UpdateExamInput) {
   const exam = await prisma.examRecord.findUnique({ where: { id } });
   if (!exam) throw new ExamError('检查记录不存在', 404);
+  // Editing a voided/discarded/deleted record would fork another revision off a
+  // dead branch (multiple rows with the same revisesExamId) — refuse.
+  if (exam.voidedAt) throw new ExamError('该记录已作废，不能编辑');
+  if (exam.discardedAt) throw new ExamError('该记录已被修订版取代，请编辑最新版本');
+  if (exam.deletedAt) throw new ExamError('该记录已删除，不能编辑');
 
   const {
     dept, templateId, templateName, content,

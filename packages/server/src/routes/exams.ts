@@ -6,6 +6,7 @@
 // hardcoding that could drift from the service's intent.
 import { Router } from 'express';
 import { prisma } from '../db.js';
+import { ah } from '../util.js';
 import {
   createExam as createExamSvc, getExamDetail, listExams, voidExam,
   updateReviewStatus, updateExam as updateExamSvc, ExamError,
@@ -15,7 +16,7 @@ import { verifyPassword, PASSWORD_KEY } from '../passwords.js';
 export const examRouter = Router();
 
 // ---------- List ----------
-examRouter.get('/', async (req, res) => {
+examRouter.get('/', ah(async (req, res) => {
   const { dept, storeId, status, include } = req.query as Record<string, string>;
   const daysToReview = req.query.daysToReview ? Number(req.query.daysToReview) : undefined;
   const ageMin = req.query.ageMin ? Number(req.query.ageMin) : undefined;
@@ -27,33 +28,33 @@ examRouter.get('/', async (req, res) => {
     if (e instanceof ExamError) return res.status(e.status).json({ error: e.message });
     throw e;
   }
-});
+}));
 
 // ---------- Detail + customer's full history ----------
-examRouter.get('/:id', async (req, res) => {
+examRouter.get('/:id', ah(async (req, res) => {
   try {
     res.json(await getExamDetail(prisma, req.params.id));
   } catch (e: any) {
     if (e instanceof ExamError) return res.status(e.status).json({ error: e.message });
     throw e;
   }
-});
+}));
 
 // ---------- Create ----------
-examRouter.post('/', async (req, res) => {
+examRouter.post('/', ah(async (req, res) => {
   try {
     res.json(await createExamSvc(prisma, req.body || {}));
   } catch (e: any) {
     if (e instanceof ExamError) return res.status(e.status).json({ error: e.message });
     throw e;
   }
-});
+}));
 
 // ---------- Edit exam (版本化保留 §2.2 + 密码同次校验) ----------
 // Password verified inline (same request as the write). The shared updateExam
 // does the discard-old + create-new write but does NOT check the password —
 // that's the caller's job (server uses local DB hash, client round-trips).
-examRouter.put('/:id', async (req, res) => {
+examRouter.put('/:id', ah(async (req, res) => {
   const { changePassword: cp, ...rest } = req.body || {};
   const ok = await verifyPassword(prisma, PASSWORD_KEY.CHANGE, cp || '');
   if (!ok) return res.status(403).json({ error: '修改检查单需要敏感信息修改密码验证通过' });
@@ -63,32 +64,32 @@ examRouter.put('/:id', async (req, res) => {
     if (e instanceof ExamError) return res.status(e.status).json({ error: e.message });
     throw e;
   }
-});
+}));
 
 // ---------- Review status update ----------
-examRouter.put('/:id/review', async (req, res) => {
+examRouter.put('/:id/review', ah(async (req, res) => {
   try {
     res.json(await updateReviewStatus(prisma, req.params.id, req.body || {}));
   } catch (e: any) {
     if (e instanceof ExamError) return res.status(e.status).json({ error: e.message });
     throw e;
   }
-});
+}));
 
 // ---------- Void an unpaid draft (B.6) ----------
-examRouter.post('/:id/void', async (req, res) => {
+examRouter.post('/:id/void', ah(async (req, res) => {
   try {
     res.json(await voidExam(prisma, req.params.id));
   } catch (e: any) {
     if (e instanceof ExamError) return res.status(e.status).json({ error: e.message });
     throw e;
   }
-});
+}));
 
 // ---------- Soft delete (to recycle bin, 30d retention) ----------
 // Stays here (not in shared service) — only the admin SPA soft-deletes to the
 // recycle bin; the Electron front desk never does this.
-examRouter.delete('/:id', async (req, res) => {
+examRouter.delete('/:id', ah(async (req, res) => {
   const { operatorId, operatorName, storeId, storeName } = req.body || {};
   const exam = await prisma.examRecord.findUnique({ where: { id: req.params.id } });
   if (!exam) return res.status(404).json({ error: '记录不存在' });
@@ -103,4 +104,4 @@ examRouter.delete('/:id', async (req, res) => {
     }),
   ]);
   res.json({ ok: true });
-});
+}));

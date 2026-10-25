@@ -6,15 +6,32 @@ import type { DeviceIdentity } from '@clinic/shared';
 
 const file = () => path.join(app.getPath('userData'), 'device.json');
 
-export function getDeviceIdentity(): DeviceIdentity | null {
+// device.json shape: DeviceIdentity + deviceToken (server-issued, per-device
+// credential returned by /api/device/register and by push/pull when the server
+// backfills it for upgraded legacy devices).
+export type StoredDeviceIdentity = DeviceIdentity & { deviceToken?: string };
+
+export function getDeviceIdentity(): StoredDeviceIdentity | null {
   try {
     if (fs.existsSync(file())) return JSON.parse(fs.readFileSync(file(), 'utf-8'));
   } catch { /* ignore */ }
   return null;
 }
 
-export function saveDeviceIdentity(d: DeviceIdentity) {
+export function saveDeviceIdentity(d: StoredDeviceIdentity) {
   fs.writeFileSync(file(), JSON.stringify(d, null, 2));
+}
+
+export function getDeviceToken(): string | null {
+  return getDeviceIdentity()?.deviceToken || null;
+}
+
+// Persist/overwrite the device token (called by device register + sync layer
+// whenever a response carries a new deviceToken).
+export function saveDeviceToken(deviceToken: string) {
+  const d = getDeviceIdentity();
+  if (!d) return;
+  saveDeviceIdentity({ ...d, deviceToken });
 }
 
 export function clearDeviceIdentity() {

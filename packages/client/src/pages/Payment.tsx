@@ -35,7 +35,6 @@ export default function Payment() {
   const nav = useNavigate();
   const sync = useSyncStatus();
   const [exam, setExam] = useState<any>(null);
-  const [staff, setStaff] = useState<any[]>([]);
   const [searchResults, setSearchResults] = useState<any[]>([]);
   const [searchQ, setSearchQ] = useState('');
   const [cfg, setCfg] = useState<PaymentConfig>(empty);
@@ -68,11 +67,8 @@ export default function Payment() {
         } catch { /* ignore */ }
       }
     });
-    api.getStaff().then((s: any) => setStaff(s || []));
   }, [examId]);
 
-  // The registrar (登记人) — the single operator for the whole transaction (E).
-  const registrar = exam ? staff.find((s) => s.id === exam.registeredBy) : null;
   // 默认归属：客户本身是会员 → 选「归属本人」；客户不是会员 → 选「不累计积分」(none)
   // 旧逻辑默认给登记人是会员的人，这里改为基于客户身份（用户要求的三选一逻辑）
   useEffect(() => {
@@ -102,7 +98,10 @@ export default function Payment() {
   const balanceDeductCents = cfg.balanceDeduct ? parseYuanToCents(cfg.balanceDeduct) : 0;
   const beansDeductCount = cfg.beansDeduct ? parseInt(cfg.beansDeduct, 10) || 0 : 0;
   const beansDeductAmount = beansDeductCount; // 1豆 = 1分
-  const expectedCash = Math.max(0, afterDiscount - balanceDeductCents - beansDeductAmount);
+  // 不使用会员卡时，抵扣一律按 0 计入应实付（即使输入框残留旧值）——资损防线。
+  const effectiveBalanceDeduct = useCard ? balanceDeductCents : 0;
+  const effectiveBeansDeductAmount = useCard ? beansDeductAmount : 0;
+  const expectedCash = Math.max(0, afterDiscount - effectiveBalanceDeduct - effectiveBeansDeductAmount);
 
   // Card balance / beans (for display + overage detection).
   const cardBalanceCents = payForMember?.balances?.balanceCents ?? 0;
@@ -159,6 +158,13 @@ export default function Payment() {
     setCfg((c) => ({ ...c, [k]: v }));
   }
 
+  // 输入层钳制：金额/数量类输入不允许负数（负值直接钳到 0）。
+  function clampNonNegative(v: string): string {
+    if (v === '') return v;
+    const n = parseFloat(v);
+    return !Number.isNaN(n) && n < 0 ? '0' : v;
+  }
+
   // ---- 代付 member search ----
   async function runSearch() {
     if (!searchQ.trim()) { setSearchResults([]); return; }
@@ -177,12 +183,22 @@ export default function Payment() {
 
   async function submit() {
     setErr('');
+    // 折扣值校验：PERCENT 必须是 1-100 的整数；MINUS 立减 >= 0 且不超过应付基础。
+    if (cfg.discountType === 'PERCENT') {
+      const v = Number(cfg.discountValue);
+      if (!cfg.discountValue || !Number.isInteger(v) || v < 1 || v > 100) { setErr('折扣值必须是 1-100 的整数（如 85 表示 85 折）'); return; }
+    }
+    if (cfg.discountType === 'MINUS') {
+      const v = parseYuanToCents(cfg.discountValue || '0');
+      if (v < 0 || v > baseAmount) { setErr('立减金额不能为负数，且不能超过应付基础金额'); return; }
+    }
     if (useCard && (balanceDeductCents > 0 || beansDeductCount > 0) && !cfg.payForMemberId) {
       setErr('使用余额/豆抵扣需选择会员卡'); return;
     }
     if (balanceOverage) { setErr(`余额超额：卡内仅剩 ${fmtCents(cardBalanceCents)} 元，无法抵扣 ${fmtCents(balanceDeductCents)} 元`); return; }
     if (beansOverage) { setErr(`豆超额：卡内仅剩 ${cardBeans} 豆，无法抵扣 ${beansDeductCount} 豆`); return; }
-    if (beansDeductCount > 0 && beansDeductCount % 100 !== 0) { setErr('豆抵现必须整百使用'); return; }
+    if (useCard && beansDeductCount > 0 && beansDeductCount % 100 !== 0) { setErr('豆抵现必须整百使用'); return; }
+    if (cashPaidCents < 0) { setErr('实付现金不能为负数'); return; }
     if (cashMismatch && !cfg.editReason.trim()) { setErr('实付金额与系统计算不一致，必须填写修改原因'); return; }
     // 「不累计积分」模式：强制不发豆和积分，跳过 awardMemberId 校验
     const finalBeansAwarded = awardMode === 'none' ? 0 : beansAwarded;
@@ -196,9 +212,10 @@ export default function Payment() {
         examId,
         discountType: cfg.discountType || undefined,
         discountValue: cfg.discountType === 'PERCENT' ? parseFloat(cfg.discountValue || '0') : (cfg.discountType === 'MINUS' ? parseYuanToCents(cfg.discountValue) : undefined),
-        balanceDeductCents,
-        beansDeductCount,
-        payForMemberId: cfg.payForMemberId || undefined,
+        // 不使用会员卡时，抵扣与代付卡一律不下发——资损防线。
+        balanceDeductCents: useCard ? balanceDeductCents : 0,
+        beansDeductCount: useCard ? beansDeductCount : 0,
+        payForMemberId: useCard ? (cfg.payForMemberId || undefined) : undefined,
         cashPaidCents,
         cashPaidEdited: cashMismatch, // auto-detected by the system (B.4)
         editReason: cfg.editReason || undefined,
@@ -235,6 +252,21 @@ export default function Payment() {
   }
 
   if (!exam) return <div className="p-6 text-sm text-ink-500">加载检查记录…</div>;
+
+  // 已作废/废弃/删除的检查单不允许支付（资损防线：防止给死单收银）。
+  if (exam.voidedAt || exam.discardedAt || exam.deletedAt) {
+    return (
+      <div className="mx-auto max-w-xl p-6">
+        <Card title="无法支付" extra={<Badge tone="rose">已失效</Badge>}>
+          <div className="rounded-md bg-rose-50 px-4 py-3 text-sm text-rose-700">该检查单已作废/废弃，不能支付。</div>
+          <div className="mt-4 flex gap-2">
+            <Button variant="ghost" onClick={() => nav(-1)}>返回</Button>
+            <Button variant="ghost" onClick={() => nav('/exam')}>查看检查列表</Button>
+          </div>
+        </Card>
+      </div>
+    );
+  }
 
   const deptLabel = exam.dept === 'OPTICAL' ? '配镜部' : '眼科部';
   const offline = isElectron && !sync.online;
@@ -305,7 +337,20 @@ export default function Payment() {
             <div className="mb-2 flex items-center justify-between">
               <div className="text-xs font-semibold text-ink-700">会员卡抵扣</div>
               <label className="flex items-center gap-2 text-xs">
-                <input type="checkbox" checked={useCard} onChange={(e) => setUseCard(e.target.checked)} />
+                <input
+                  type="checkbox"
+                  checked={useCard}
+                  onChange={(e) => {
+                    const v = e.target.checked;
+                    setUseCard(v);
+                    if (!v) {
+                      // 取消用卡：清空抵扣与代付卡选择，避免残留值被误提交（资损防线）。
+                      setCfg((c) => ({ ...c, balanceDeduct: '', beansDeduct: '', payForMemberId: '' }));
+                      setPayForMember(null);
+                      setTouched((t) => ({ ...t, cash: false })); // 让实付按无抵扣重算后自动回填
+                    }
+                  }}
+                />
                 使用会员卡
               </label>
             </div>
@@ -344,7 +389,7 @@ export default function Payment() {
                       <Input
                         type="number"
                         value={cfg.balanceDeduct}
-                        onChange={(e) => set('balanceDeduct', e.target.value)}
+                        onChange={(e) => set('balanceDeduct', clampNonNegative(e.target.value))}
                         placeholder="如 800"
                         className={balanceOverage ? 'border-rose-500' : ''}
                       />
@@ -362,7 +407,7 @@ export default function Payment() {
                       <Input
                         type="number"
                         value={cfg.beansDeduct}
-                        onChange={(e) => set('beansDeduct', e.target.value)}
+                        onChange={(e) => set('beansDeduct', clampNonNegative(e.target.value))}
                         placeholder="如 500"
                         className={beansOverage ? 'border-rose-500' : ''}
                       />
@@ -394,7 +439,7 @@ export default function Payment() {
                 <Input
                   type="number"
                   value={cfg.cashPaid}
-                  onChange={(e) => { setTouched((t) => ({ ...t, cash: true })); set('cashPaid', e.target.value); }}
+                  onChange={(e) => { setTouched((t) => ({ ...t, cash: true })); set('cashPaid', clampNonNegative(e.target.value)); }}
                 />
               </Field>
               <Field label="修改原因（实付与系统计算不一致时必填）" error={needsReason ? '实付与计算不符，必须填写原因' : undefined}>

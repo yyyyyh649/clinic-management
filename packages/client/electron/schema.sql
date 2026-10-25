@@ -17,6 +17,7 @@ CREATE TABLE "Device" (
     "boundAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "lastSyncAt" DATETIME,
     "appVersion" TEXT,
+    "token" TEXT,
     "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" DATETIME NOT NULL,
     CONSTRAINT "Device_storeId_fkey" FOREIGN KEY ("storeId") REFERENCES "Store" ("id") ON DELETE RESTRICT ON UPDATE CASCADE
@@ -445,21 +446,14 @@ CREATE UNIQUE INDEX "SyncCursor_deviceId_tableName_key" ON "SyncCursor"("deviceI
 
 
 
--- Add columns (a0de7a5 missed these in initial schema.sql; needed for §2.2 versioning + offline mode)
--- Note: these are also added via ALTER TABLE in runMigrations for existing DBs;
--- here only affects fresh DBs created by applySchema.
+-- Late-added indexes (also created idempotently by runMigrations for existing
+-- DBs; here they only affect fresh DBs created by applySchema).
 CREATE INDEX IF NOT EXISTS "ExamRecord_revisesExamId_idx" ON "ExamRecord"("revisesExamId");
 CREATE INDEX IF NOT EXISTS "ExamRecord_registeredBy_idx" ON "ExamRecord"("registeredBy");
 CREATE INDEX IF NOT EXISTS "Member_registeredAt_idx" ON "Member"("registeredAt");
 CREATE INDEX IF NOT EXISTS "Member_registeredStoreId_idx" ON "Member"("registeredStoreId");
 CREATE INDEX IF NOT EXISTS "Customer_createdAt_idx" ON "Customer"("createdAt");
-
-
--- Add columns (a0de7a5 missed these in initial schema.sql; needed for §2.2 versioning + offline mode)
--- Note: these are also added via ALTER TABLE in runMigrations for existing DBs;
--- here only affects fresh DBs created by applySchema.
-CREATE INDEX IF NOT EXISTS "ExamRecord_revisesExamId_idx" ON "ExamRecord"("revisesExamId");
-CREATE INDEX IF NOT EXISTS "ExamRecord_registeredBy_idx" ON "ExamRecord"("registeredBy");
-CREATE INDEX IF NOT EXISTS "Member_registeredAt_idx" ON "Member"("registeredAt");
-CREATE INDEX IF NOT EXISTS "Member_registeredStoreId_idx" ON "Member"("registeredStoreId");
-CREATE INDEX IF NOT EXISTS "Customer_createdAt_idx" ON "Customer"("createdAt");
+CREATE INDEX IF NOT EXISTS "Ledger_field_idx" ON "Ledger"("field");
+CREATE INDEX IF NOT EXISTS "BeanBatch_expired_idx" ON "BeanBatch"("expired");
+CREATE INDEX IF NOT EXISTS "Payment_storeId_idx" ON "Payment"("storeId");
+CREATE INDEX IF NOT EXISTS "Payment_operatorId_idx" ON "Payment"("operatorId");

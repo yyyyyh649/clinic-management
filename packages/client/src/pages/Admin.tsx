@@ -1,9 +1,10 @@
 // A: Backend admin embedded in the front-desk Electron app.
 //
-// The same server admin SPA the browser uses is loaded in an <iframe> with a
-// ?token=<token> query param, which the SPA consumes to auto-login (see
-// server/web/src/App.tsx). This way there is ONE admin codebase shared by both
-// the Electron entry and the remote browser entry — no duplicate maintenance.
+// The same server admin SPA the browser uses is loaded in an <iframe> with the
+// token in the URL hash (#token=<token>), which the SPA consumes to auto-login
+// (see server/web/src/App.tsx). Hash keeps the token out of access logs. This
+// way there is ONE admin codebase shared by both the Electron entry and the
+// remote browser entry — no duplicate maintenance.
 //
 // Re-entering /admin always shows the password gate first (state lives in the
 // component, not a global), so an unattended front-desk PC can't be peeked into.
@@ -49,9 +50,11 @@ export default function Admin() {
   }
 
   if (token) {
-    // The admin SPA reads ?token= on load, auto-logs-in, then strips it from the URL.
-    // Use a key so re-login after logout (token cleared) reloads the iframe fresh.
-    const src = `${serverUrl}/?token=${encodeURIComponent(token)}#/`;
+    // The admin SPA reads the token from the URL hash on load, auto-logs-in,
+    // then strips it. Hash (not ?token= query) so the token never lands in
+    // server access logs / proxies. Use a key so re-login after logout
+    // (token cleared) reloads the iframe fresh.
+    const src = `${serverUrl}/#token=${encodeURIComponent(token)}`;
     return (
       <div className="flex h-full flex-col">
         <div className="flex items-center justify-between border-b border-slate-200 bg-white px-4 py-2">
@@ -59,7 +62,7 @@ export default function Admin() {
           <div className="flex items-center gap-2">
             <a
               className="text-xs text-brand-600 hover:underline"
-              href={`${serverUrl}/?token=${encodeURIComponent(token)}#/`}
+              href={`${serverUrl}/#token=${encodeURIComponent(token)}`}
               target="_blank"
               rel="noreferrer"
             >

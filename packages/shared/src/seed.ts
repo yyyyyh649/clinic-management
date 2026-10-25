@@ -8,7 +8,15 @@ import { DEPT, SETTING_KEYS } from './constants.js';
 // Deterministic id helper.
 const id = (s: string) => s;
 
-export async function runSeed(prisma: PrismaClient): Promise<void> {
+export interface SeedOptions {
+  // Client devices skip Setting seeds: their local "now" would win LWW against
+  // admin-edited global settings on first push and silently revert them
+  // chain-wide. Settings arrive via the first pull instead.
+  includeSettings?: boolean;
+}
+
+export async function runSeed(prisma: PrismaClient, options: SeedOptions = {}): Promise<void> {
+  const includeSettings = options.includeSettings !== false;
   // ---- Stores ----
   await prisma.store.upsert({ where: { id: id('seed-store-s1') }, update: {}, create: { id: id('seed-store-s1'), code: 'S1', name: '明亮眼科总店' } });
   await prisma.store.upsert({ where: { id: id('seed-store-s2') }, update: {}, create: { id: id('seed-store-s2'), code: 'S2', name: '明亮眼科分店' } });
@@ -36,8 +44,10 @@ export async function runSeed(prisma: PrismaClient): Promise<void> {
   }
 
   // ---- Bean expiry setting (disabled by default = 永久有效) ----
-  await prisma.setting.upsert({ where: { key: SETTING_KEYS.BEAN_EXPIRY_ENABLED }, update: {}, create: { key: SETTING_KEYS.BEAN_EXPIRY_ENABLED, value: 'false' } });
-  await prisma.setting.upsert({ where: { key: SETTING_KEYS.BEAN_EXPIRY_MONTHS }, update: {}, create: { key: SETTING_KEYS.BEAN_EXPIRY_MONTHS, value: '12' } });
+  if (includeSettings) {
+    await prisma.setting.upsert({ where: { key: SETTING_KEYS.BEAN_EXPIRY_ENABLED }, update: {}, create: { key: SETTING_KEYS.BEAN_EXPIRY_ENABLED, value: 'false' } });
+    await prisma.setting.upsert({ where: { key: SETTING_KEYS.BEAN_EXPIRY_MONTHS }, update: {}, create: { key: SETTING_KEYS.BEAN_EXPIRY_MONTHS, value: '12' } });
+  }
 
   // ---- Exam templates (1 optical + 1 eye, each multi-page) ----
   const opticalPages = [
